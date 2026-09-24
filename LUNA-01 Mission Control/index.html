@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LUNA-01: Mission Control</title>
+  <meta name="description" content="A short educational lunar mission design game - NASA Space Apps Challenge 2026.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="stage">
+    <canvas id="game" width="1280" height="720" aria-label="Mission visual display (procedurally drawn scene)"></canvas>
+    <div id="scanlines" aria-hidden="true"></div>
+
+    <header id="hud" class="hidden" aria-label="Mission resources">
+      <div class="brand">LUNA-01 <span>MISSION CONTROL</span></div>
+      <div class="meters">
+        <div class="meter" id="m-power"><label>POWER</label><div class="bar"><i></i></div><b>—</b></div>
+        <div class="meter" id="m-fuel"><label>FUEL</label><div class="bar"><i></i></div><b>—</b></div>
+        <div class="meter" id="m-budget"><label>BUDGET</label><div class="bar"><i></i></div><b>—</b></div>
+        <div class="meter" id="m-science"><label>SCIENCE</label><div class="bar goal"><i></i></div><b>—</b></div>
+      </div>
+      <div id="risk" class="risk">RISK <b>LOW</b></div>
+    </header>
+    <nav id="tracker" class="hidden" aria-label="Mission progress"></nav>
+
+    <button id="mute" class="mute" data-act="mute" aria-pressed="true" title="Toggle sound (M)">♪ SOUND ON</button>
+
+    <section id="panel" class="panel hidden" aria-live="polite"></section>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <div id="loading">INITIALISING MISSION CONTROL…</div>
+  </div>
+
+  <noscript><p style="color:#fff;padding:20px">LUNA-01 needs JavaScript enabled.</p></noscript>
+
+  <!-- Embedded copy of the CSV: fallback for file:// where fetch() is blocked. -->
+  <script src="data/moon_data_embedded.js"></script>
+  <script src="src/data.js"></script>
+  <script src="src/state.js"></script>
+  <script src="src/audio.js"></script>
+  <script src="src/render.js"></script>
+  <script src="src/ui.js"></script>
+  <script src="src/game.js"></script>
+</body>
+</html>

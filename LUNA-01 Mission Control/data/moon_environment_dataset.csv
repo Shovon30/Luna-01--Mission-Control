@@ -1,0 +1,22 @@
+category,parameter,value,unit,game_note,source_name,source_url
+Gravity,Surface gravity,1.62,m/s^2,Use for jump height / lander physics,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Gravity,Surface gravity relative to Earth,0.165,ratio (Earth = 1),Derived: 1.62 / 9.81 (about 1/6 g),Derived from NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Gravity,Escape velocity,2.38,km/s,Delta-v needed to leave the Moon,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Body,Mass,7.346e22,kg,,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Body,Mean radius,1737.4,km,,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Body,Bulk density,3344,kg/m^3,,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Orbit,Mean distance from Earth (semi-major axis),384400,km,Travel-time / comms-delay calculations,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Orbit,Synodic period (sunrise to sunrise),29.53,Earth days,~14.8 days of daylight then ~14.8 days of night (derived); drives solar power & battery needs,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Environment,Surface temperature minimum (typical range),95,K (about -178 C),Night-time cold,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Environment,Surface temperature maximum (typical range),390,K (about 117 C),Day-time heat,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Environment,Coldest measured temperature (permanently shadowed craters),26,K (-249 C),Hermite crater floor; Peary & Bosch craters (LRO Diviner),NASA SSERVI - LRO Finds Coldest Place on the Moon,https://sservi.nasa.gov/articles/lro-finds-coldest-place-on-the-moon/
+Environment,Atmospheric surface pressure,3e-15,bar,Effectively vacuum: pressurised habitats & suits required,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Environment,Main atmospheric species (night),"He-4, Ne-20, H, Ar-40",-,No breathable oxygen,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Environment,Bond albedo,0.11,ratio,,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Water,Water in LCROSS impact plume (Cabeus crater; south pole),6,% (approx.),"Impact on 2009-10-09; ""roughly 6% water"" with some nearly pure ice crystals",NASA NSSDCA - Ice on the Moon,https://nssdc.gsfc.nasa.gov/planetary/ice/ice_moon.html
+Water,Hydrogen signature over north polar region (Lunar Prospector),4.6,% signature,Neutron spectrometer; indirect evidence of ice,NASA NSSDCA - Ice on the Moon,https://nssdc.gsfc.nasa.gov/planetary/ice/ice_moon.html
+Water,Hydrogen signature over south polar region (Lunar Prospector),3.0,% signature,Neutron spectrometer; indirect evidence of ice,NASA NSSDCA - Ice on the Moon,https://nssdc.gsfc.nasa.gov/planetary/ice/ice_moon.html
+Water,Estimated total polar ice mass (older model estimate),6e12,kg,NASA notes this 'could be off considerably' - treat as low-confidence,NASA NSSDCA - Ice on the Moon,https://nssdc.gsfc.nasa.gov/planetary/ice/ice_moon.html
+Water,Water in sunlit soil (SOFIA 2020),~12-ounce bottle per m^3 of soil,-,Very dry - far drier than Sahara soil; hard to extract,NASA Science - Moon Water and Ices,https://science.nasa.gov/moon/moon-water-and-ices/
+Radiation,Surface dose rate measured during Apollo,0.8-1.5,millirad/hour,No magnetic field or thick atmosphere for shielding,NASA Apollo Lunar Surface Journal - Radiation,https://www.nasa.gov/wp-content/uploads/static/history/alsj/WOTM/WOTM-Radiation.html
+Radiation,Unshielded dose from Aug 1972 solar particle event (estimate),600 (skin) / 130 (blood-forming organs),rem,Potentially lethal - justifies storm shelters in the game,NASA Apollo Lunar Surface Journal - Radiation,https://www.nasa.gov/wp-content/uploads/static/history/alsj/WOTM/WOTM-Radiation.html
