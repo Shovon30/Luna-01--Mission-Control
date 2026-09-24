@@ -30,7 +30,7 @@ const ENTER = {
   },
   LAUNCH() {
     commitDesign(Game.sel);
-    Game.launchStep = 0; Game.phase = 'running';
+    Game.launchStep = 0; Game.phase = 'running'; Game.launchBlast = false;
     Draw.clearParticles();
   },
   TRANSFER() { Game.phase = 'cruise'; Draw.clearParticles(); },
@@ -169,7 +169,7 @@ const ACTIONS = {
     Game.sel = { rocket: null, power: null, instrument: null };
     Game.review = null; Game.lastGain = 0; Game.eventDrain = 0;
     Draw.clearParticles();
-    Game.go('DESIGN');
+    Game.go('BRIEFING');
   },
   title() { Sfx.click(); Game.go('TITLE'); },
   mute() { Sfx.init(); Sfx.startMusic(); Sfx.toggleMute(); UI.setMuteLabel(); },
