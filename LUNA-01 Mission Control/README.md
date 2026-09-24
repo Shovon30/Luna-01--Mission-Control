@@ -23,8 +23,11 @@ Controls: mouse. Keys `1`/`2`/`3` (or `A`/`B`/`C`) pick decision options. `M` to
 ## Tech
 
 HTML5, CSS3, vanilla JavaScript, Canvas 2D and the Web Audio API. It uses no libraries, no image files and no audio files.
-Every visual is drawn by code: stars, Earth, Moon and craters, spacecraft, rocket, flames, particles, beams, data pulses. All sound
-is synthesized: the chiptune music loop, UI blips, warning, launch rumble, scan, transmission, success and failure.
+Every visual is drawn by code. Earth and Moon are generated pixel by pixel at startup (3D noise terrain, crater height maps,
+directional lighting, atmospheric limb). Spacecraft, rocket, exhaust, smoke, beams and data pulses are drawn each frame, and
+the launch has camera shake. All sound is synthesized through a compressor: a mission-control ambience (drone, telemetry pulses,
+computer chatter), NASA-style Quindar tones, a master-alarm warning, an ignition explosion with sustained rumble, sonar-style
+scan pings and modem-style data bursts.
 
 ```
 index.html               page shell + script tags (classic scripts, so file:// works)
@@ -61,24 +64,29 @@ Budget, power, fuel, science, mass, communication and risk numbers are a **simpl
 
 ## Game rules (simplified model)
 
-- **Start:** $100M budget, 60 science goal. The rocket sets the payload limit (520 / 580 / 800 kg) and the fuel.
-- **Design validation:** the design must pass budget ≤ $100M, mass ≤ rocket limit, power ≥ 60%, and fuel after lunar arrival ≥ 10%.
-  Each check can fail (e.g. Heavy + High-Capacity + Spectrometer costs $101M).
-- **Communication** = bus 40 + rocket dish (+10/+20/+30) + power system (+0/+20/+10). Weaker links make transmission cost more power.
-- **Arrival burn** uses fuel = spacecraft mass ÷ 10.
-- **Orbit:** Low gives +10 science and costs more fuel, power and risk. Higher is cheap and safe.
-- **Survey:** science = instrument base × scan multiplier (0.6 / 1.0 / 1.35) + target bonus. The bonus is Spectrometer +8 (water ice) or Radiation +4.
-- **Event (lunar night):** heaters drain 12% power (4% with battery). Then you choose: A reduces science, B spends power, C adds science but +20 risk.
-- **Transmission:** Compressed returns 80% of the data for little power. Full returns 100% for more power.
-- **Risk:** power < 20% gives +10 and fuel < 10% gives +15. Risk ≥ 40 means a transmission anomaly (−15% data). Risk ≥ 75 loses the mission.
-- **Outcome** (deterministic, no randomness): **Failure** if power hits 0%, risk ≥ 75, or science < 30.
-  **Success** if science ≥ 60. Otherwise **Partial success**.
+- **Mission condition (random each run)** is shown in the briefing and changes which design wins:
+  - *Solar Maximum*: every risk increase ×1.5; Radiation Sensor +10 science per scan.
+  - *Long Polar Night*: lunar-night drain 24% (8% with battery); reserve power costs 22% (8% with battery).
+  - *Budget Cut*: budget cap $80M.
+  - *Ice Hunt*: science goal 80; Spectrometer +10 science per scan.
+- **Objectives.** Full **Success** needs all three: science ≥ goal (70, or 80 in Ice Hunt), end power ≥ 15%, and end fuel ≥ 10%.
+  **Failure** means power reached 0%, risk ≥ 75, or science < 40. Anything else is **Partial success**, and the report lists the missed objectives.
+- **Design validation:** budget ≤ cap, mass ≤ rocket limit, power ≥ 60%, and fuel after lunar arrival ≥ 10%.
+- **Communication** = bus 40 + rocket dish (+10/+20/+30) + power system (+0/+20/+10).
+- **Arrival burn** uses fuel = spacecraft mass ÷ 10. **Orbit:** Low gives +12 science for 18% fuel, 8% power and +10 risk. Higher costs 6% fuel and 3% power.
+- **Survey:** science = instrument base (48/52/56) × scan multiplier (0.6/1.0/1.35) + bonus. Power 10/16/27; risk 0/+8/+16.
+- **Event:** heaters drain 14% power (5% with battery). Then you choose: A −10 science and −5 risk; B spend reserve power; C +8 science, −8% power, +20 risk.
+- **Transmission:** Compressed returns 75% of the data and full returns 100%. Power cost falls as comm capability rises. A weak link on full resolution adds risk.
+- **Risk:** power < 20% gives +10 and fuel < 10% gives +15. Risk ≥ 40 causes a transmission anomaly (−20% data).
+- Outcomes are deterministic. Across every possible path, about 3% succeed; the winning plans differ by condition, and no plan wins all four.
 
 ## Assumptions made during implementation
 
 - The GDD asks for exactly three design choices, so communication capability is *derived* (rocket fairing → dish size,
   power system → transmitter power) rather than being a fourth choice.
 - The survey target is the south polar region (Cabeus area), because the dataset's water data (LCROSS) refers to it.
+- Mission conditions and the three objectives were added to make decisions challenging and replayable (user request). They stay
+  within the GDD's single mission.
 - The mission event is the GDD's "Power Demand Increase", framed as the target entering lunar night, which uses the dataset's
   synodic period and minimum temperature.
 - The CSV is loaded with `fetch()`; the embedded JS copy exists only because browsers block `fetch()` on `file://`.

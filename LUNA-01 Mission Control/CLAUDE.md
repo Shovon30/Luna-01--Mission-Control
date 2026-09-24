@@ -22,4 +22,6 @@ Spec: `docs/LUNA-01_GDD.pdf`. Data: `data/moon_environment_dataset.csv` (authori
 ## Testing
 - Serve with `python -m http.server 8123` (launch config in .claude/launch.json).
 - Balance check: every path's outcome can be enumerated headlessly by loading src/state.js in Node and calling
-  commitDesign → arrive → chooseOrbit → runScan → applyEventDrain → chooseEvent → transmit → evaluate.
+  resetMission(scenarioId) → commitDesign → arrive → chooseOrbit → runScan → applyEventDrain → chooseEvent → transmit → evaluate.
+  Target: roughly 2-5% of all paths succeed, several designs win per condition, no plan wins in all four conditions.
+- Earth/Moon textures are generated per-pixel in Draw.init() (~0.7 s); keep per-frame drawing to drawImage + light overlays.
