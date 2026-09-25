@@ -33,4 +33,7 @@ Spec: `docs/LUNA-01_GDD.pdf`. Data: the four CSVs in `data/` (authoritative; nev
   resetMission(scenarioId); M.region = id → commitDesign → setTravel → departEarth → resolveHazard(slot 1, prob. hazardChance) → arrive → chooseOrbit → resolveHazard(slot 2)
   → runScan → applyEventDrain → chooseEvent → transmit → evaluate (expectimax over hazardWeights and gamble odds).
   Targets: optimal play wins most region x condition combos; random design + good play ~15-30%; kits matter where threat is HIGH.
-- Earth/Moon textures are generated per-pixel in Draw.init() (nearside + Earth at boot, farside deferred); keep per-frame drawing to drawImage + light overlays.
+- Earth/Moon are equirectangular maps built in Draw.init() (~1.2 s), wrapped onto spinning globes per frame via size-bucketed
+  lookups (128/256/512 px); a globe re-renders only when its longitude moves a texel. Keep frames at a few ms.
+- Spin: `earth(ctx,x,y,r,hours)`, `moon(ctx,x,y,r,{lon})` with `earthLon/moonLon(hours)` (periods from the orbit CSV).
+  Journey scenes use `journeyMET()`, others `lapseHours(t)`. Target/survey/downlink Moon stays static (markers).

@@ -128,14 +128,17 @@ const Draw = (() => {
   // Light direction for Earth and Moon (upper-left, towards the viewer).
   const LIGHT = (() => { const v = [-0.55, -0.42, 0.72], l = Math.hypot(...v); return v.map(c => c / l); })();
 
-  // ================================================================ MOON
-  // Textures are generated on a real latitude/longitude grid: the major maria and named
-  // craters sit at their (approximate) real positions, so the Apollo landing sites from the
-  // regions CSV land on the right terrain. Two views: the nearside (lon 0, what Earth sees)
-  // and the farside (lon 180). Both are tilted so the south polar region is visible.
-  const MT = 640, D2R = Math.PI / 180, TILT = 15 * D2R;
+  // ================================================================ ROTATING GLOBES (Moon + Earth)
+  // Surfaces are generated once as equirectangular longitude/latitude maps. Every frame they are
+  // wrapped onto a sphere through a precomputed per-pixel lookup (latitude row, relative longitude,
+  // sunlight), so the surface can spin while the Sun direction stays fixed. The major maria and named
+  // craters sit at their (approximate) real positions, so the Apollo sites from the regions CSV land
+  // on the right terrain. Views are tilted so the south polar region is visible.
+  const D2R = Math.PI / 180, TILT = 15 * D2R;
   const VIEWS = { near: 0, far: 180 };
-  const moonTex = { near: null, far: null };
+  const MW = 1024, MH = 512;                 // map size (power-of-two width for fast wrapping)
+  const GS = 512;                            // on-screen globe texture size
+  let moonMap = null, earthMap = null;
 
   // Maria [lat, lon, radius deg, strength] - a visual approximation of the real map.
   const MARIA = [
@@ -156,105 +159,202 @@ const Draw = (() => {
     const xb = Math.cos(la) * Math.sin(lo), yb = Math.sin(la), zb = Math.cos(la) * Math.cos(lo);
     return { x: xb, y: yb * Math.cos(TILT) + zb * Math.sin(TILT), z: zb * Math.cos(TILT) - yb * Math.sin(TILT) };
   }
-  // Screen offset in moon radii (y down) for a latitude/longitude in a given view.
-  function project(lat, lon, view = 'near') {
-    const v = viewVec(lat, lon, VIEWS[view]);
+  // Screen offset in moon radii (y down) for a latitude/longitude in a given (non-spinning) view.
+  function project(lat, lon, view = 'near', centreLon) {
+    const v = viewVec(lat, lon, centreLon == null ? VIEWS[view] : centreLon);
     return { x: v.x, y: -v.y, z: v.z, visible: v.z > 0 };
   }
 
-  function buildMoon(view) {
-    const lon0 = VIEWS[view];
-    const R = MT / 2, N = MT * MT, rnd = mulberry32(view === 'near' ? 42 : 77), fbm = makeNoise(5);
-    const hgt = new Float32Array(N), alb = new Float32Array(N), inside = new Uint8Array(N);
+  // Texel (px, py) -> unit body vector, cached per row/column.
+  const colSin = new Float32Array(MW), colCos = new Float32Array(MW), rowSin = new Float32Array(MH), rowCos = new Float32Array(MH);
+  for (let x = 0; x < MW; x++) { const lo = (x + 0.5) / MW * TAU - Math.PI; colSin[x] = Math.sin(lo); colCos[x] = Math.cos(lo); }
+  for (let y = 0; y < MH; y++) { const la = Math.PI / 2 - (y + 0.5) / MH * Math.PI; rowSin[y] = Math.sin(la); rowCos[y] = Math.cos(la); }
+
+  function buildMoonMap() {
+    const N = MW * MH, rnd = mulberry32(42), fbm = makeNoise(5);
+    const hgt = new Float32Array(N), alb = new Float32Array(N);
     const mariaV = MARIA.map(([la, lo, r, s]) => { const c = Math.cos(la * D2R); return [c * Math.sin(lo * D2R), Math.sin(la * D2R), c * Math.cos(lo * D2R), r, s || 1]; });
-    const ct = Math.cos(TILT), st = Math.sin(TILT), cl = Math.cos(lon0 * D2R), sl = Math.sin(lon0 * D2R);
-    // 1. albedo (maria vs highlands) and small-scale relief, sampled on the body sphere
-    for (let py = 0; py < MT; py++) for (let px = 0; px < MT; px++) {
-      const nx = (px + 0.5 - R) / R, ny = (py + 0.5 - R) / R, d2 = nx * nx + ny * ny;
-      if (d2 > 1.0) continue;
-      const i = py * MT + px, nz = Math.sqrt(1 - d2);
-      inside[i] = 1;
-      const yv = -ny, yb = yv * ct - nz * st, zb0 = nz * ct + yv * st;
-      const bx = nx * cl + zb0 * sl, bz = -nx * sl + zb0 * cl;
-      const pert = fbm(bx * 3 + 7, yb * 3, bz * 3, 3);
-      let m = 0;
+    // 1. albedo (maria vs highlands) and small-scale relief
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+      const i = y * MW + x, bx = rowCos[y] * colSin[x], by = rowSin[y], bz = rowCos[y] * colCos[x];
+      let m = 0, pert = -1;
       for (const [mx, my, mz, r, s] of mariaV) {
-        const cosd = bx * mx + yb * my + bz * mz;
+        const cosd = bx * mx + by * my + bz * mz;
         if (cosd < 0.85) continue;
+        if (pert < 0) pert = fbm(bx * 3 + 7, by * 3, bz * 3, 3);
         const dd = Math.acos(Math.min(1, cosd)) / D2R, rr = r * (0.75 + 0.5 * pert);
         m = Math.max(m, s * smooth(rr + 2.5, rr - 2.5, dd));
       }
-      const fine = fbm(bx * 14, yb * 14, bz * 14, 3), mid = fbm(bx * 4 + 2, yb * 4, bz * 4, 3);
+      const fine = fbm(bx * 14, by * 14, bz * 14, 3), mid = fbm(bx * 4 + 2, by * 4, bz * 4, 3);
       alb[i] = lerp(0.64, 0.3, m) + (fine - 0.5) * 0.1 + (mid - 0.5) * 0.08;
-      hgt[i] = (fbm(bx * 7 + 9, yb * 7, bz * 7, 4) - 0.5) * 6 * (1 - 0.6 * m);
+      hgt[i] = (fbm(bx * 7 + 9, by * 7, bz * 7, 4) - 0.5) * 6 * (1 - 0.6 * m);
     }
-    // 2. craters stamped into the height map, foreshortened towards the limb
-    function crater(cx, cy, rad, depth, fresh, rays) {
-      const nx = (cx - R) / R, ny = (cy - R) / R, d = Math.hypot(nx, ny);
-      const nz = Math.sqrt(Math.max(0.02, 1 - d * d));
-      const ux = d > 1e-4 ? nx / d : 1, uy = d > 1e-4 ? ny / d : 0;
-      const ext = rad * (rays ? 7 : fresh ? 3 : 1.6);
-      const x0 = Math.max(0, Math.floor(cx - ext)), x1 = Math.min(MT - 1, Math.ceil(cx + ext));
-      const y0 = Math.max(0, Math.floor(cy - ext)), y1 = Math.min(MT - 1, Math.ceil(cy + ext));
+    // 2. craters (radius in radians); heights in "screen pixel" units of a 320 px-radius globe
+    const PX = 320;
+    function crater(la, lo, rr, fresh, rays) {
+      const cx = Math.cos(la) * Math.sin(lo), cy = Math.sin(la), cz = Math.cos(la) * Math.cos(lo);
+      const ext = rr * (rays ? 7 : fresh ? 3 : 1.6), depth = rr * PX * 0.2;
+      const y0 = Math.max(0, Math.floor((Math.PI / 2 - la - ext) / Math.PI * MH)), y1 = Math.min(MH - 1, Math.ceil((Math.PI / 2 - la + ext) / Math.PI * MH));
+      const cxp = (lo + Math.PI) / TAU * MW, dxp = Math.min(MW / 2, Math.ceil(ext / TAU * MW / Math.max(0.05, Math.cos(la))));
       const ph = rnd() * TAU;
-      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-        const i = y * MT + x;
-        if (!inside[i]) continue;
-        const dx = x - cx, dy = y - cy;
-        const dr = (dx * ux + dy * uy) / Math.max(nz, 0.2), dt = -dx * uy + dy * ux;
-        const q = Math.hypot(dr, dt) / rad;
+      for (let y = y0; y <= y1; y++) for (let k = -dxp; k <= dxp; k++) {
+        const x = ((Math.floor(cxp) + k) % MW + MW) % MW, i = y * MW + x;
+        const bx = rowCos[y] * colSin[x], by = rowSin[y], bz = rowCos[y] * colCos[x];
+        const q = Math.acos(Math.min(1, bx * cx + by * cy + bz * cz)) / rr;
+        if (q > 7) continue;
         if (q < 1) hgt[i] += depth * (q * q * 1.25 - 1);
         else if (q < 1.6) hgt[i] += depth * 0.25 * Math.exp(-Math.pow((q - 1) / 0.22, 2));
         if (fresh && q < 3) alb[i] += 0.1 * Math.exp(-q * 1.2) * (q > 0.9 ? 1 : 0.4);
         if (rays && q > 1 && q < 7) {
-          const a = Math.atan2(dt, dr);
+          const a = Math.atan2(by - cy, (x - cxp) / MW * TAU * rowCos[y]);
           alb[i] += 0.13 * Math.pow(Math.max(0, Math.cos(a * 7 + ph) * Math.cos(a * 3 - ph)), 6) * Math.exp(-(q - 1) / 2.5);
         }
       }
     }
-    const nCraters = view === 'near' ? 600 : 950;
-    for (let k = 0; k < nCraters; k++) {
-      const rad = 1.3 + Math.pow(rnd(), 8) * 62;
-      const a = rnd() * TAU, rr = Math.sqrt(rnd()) * (R - rad * 0.3);
-      const cx = R + Math.cos(a) * rr, cy = R + Math.sin(a) * rr;
-      const i = Math.floor(cy) * MT + Math.floor(cx);
-      if (rad > 5 && alb[i] < 0.45 && rnd() < 0.75) continue;       // maria are younger: fewer big craters
-      crater(cx, cy, rad, rad * 0.2, rnd() < 0.1, false);
+    for (let k = 0; k < 1500; k++) {
+      const rr = (1.3 + Math.pow(rnd(), 8) * 62) / PX;
+      const la = Math.asin(2 * rnd() - 1), lo = rnd() * TAU - Math.PI;
+      const i = Math.floor((Math.PI / 2 - la) / Math.PI * MH) * MW + Math.floor((lo + Math.PI) / TAU * MW);
+      if (Math.cos(lo) > 0 && rnd() < 0.35) continue;                    // the farside is more heavily cratered
+      if (rr * PX > 5 && alb[i] < 0.45 && rnd() < 0.75) continue;        // maria are younger: fewer big craters
+      crater(la, lo, rr, rnd() < 0.1, false);
     }
     const shadows = [];
     for (const [la, lo, rd, rays] of NAMED_CRATERS) {
-      const p = project(la, lo, view);
-      if (p.z < 0.08) continue;
-      const rad = rd * D2R * R;
-      crater(R + p.x * R, R + p.y * R, rad, rad * 0.22, rays, rays);
-      if (la < -80) shadows.push([R + p.x * R, R + p.y * R, rad * 0.75]);   // permanently shadowed polar floor
+      crater(la * D2R, lo * D2R, rd * D2R, rays, rays);
+      if (la < -80) shadows.push([la * D2R, lo * D2R, rd * D2R * 0.75]);   // permanently shadowed polar floor
     }
-    // 3. shading from height-map normals + sphere normal
-    const img = new ImageData(MT, MT), px4 = img.data;
-    const [lx, ly, lz] = LIGHT;
-    for (let py = 1; py < MT - 1; py++) for (let px = 1; px < MT - 1; px++) {
-      const i = py * MT + px;
-      if (!inside[i]) continue;
-      const nx = (px + 0.5 - R) / R, ny = (py + 0.5 - R) / R, dist = Math.hypot(nx, ny), nz = Math.sqrt(Math.max(0, 1 - dist * dist));
-      const gx = (hgt[i + 1] - hgt[i - 1]) * 0.5, gy = (hgt[i + MT] - hgt[i - MT]) * 0.5;
-      let sx = nx - gx * 0.42, sy = ny - gy * 0.42, sz = nz;
-      const l = Math.hypot(sx, sy, sz); sx /= l; sy /= l; sz /= l;
-      const lam = Math.max(0, sx * lx + sy * ly + sz * lz);
-      let b = clamp(alb[i]) * (0.05 + 1.1 * Math.pow(lam, 0.85));
-      for (const [sx0, sy0, sr] of shadows) if (Math.hypot(px - sx0, py - sy0) < sr) b *= 0.3;
-      const edge = clamp((1 - dist) * R * 1.2);
-      const o = i * 4;
-      px4[o] = Math.min(255, b * 238); px4[o + 1] = Math.min(255, b * 232); px4[o + 2] = Math.min(255, b * 224); px4[o + 3] = edge * 255;
+    // 3. bake relief shading (Sun from the upper-left of the disc) into the albedo
+    // slope per map texel -> slope per pixel of a 320 px-radius disc, x0.42 relief strength (as before)
+    const le = LIGHT[0], ln = -LIGHT[1], lu = LIGHT[2], kS = 0.42 * (MW / TAU) / PX;
+    const out = new Float32Array(N);
+    for (let y = 1; y < MH - 1; y++) for (let x = 0; x < MW; x++) {
+      const i = y * MW + x, xl = y * MW + ((x + MW - 1) & (MW - 1)), xr = y * MW + ((x + 1) & (MW - 1));
+      const gE = (hgt[xr] - hgt[xl]) * 0.5 * kS / Math.max(0.15, rowCos[y]), gN = (hgt[i - MW] - hgt[i + MW]) * 0.5 * kS;
+      let shade = (lu - gE * le - gN * ln) / (lu * Math.sqrt(1 + gE * gE + gN * gN));
+      let b = clamp(alb[i]) * Math.max(0.15, shade);
+      if (rowSin[y] < -0.97) for (const [sla, slo, sr] of shadows) {
+        const cosd = rowCos[y] * colSin[x] * Math.cos(sla) * Math.sin(slo) + rowSin[y] * Math.sin(sla) + rowCos[y] * colCos[x] * Math.cos(sla) * Math.cos(slo);
+        if (Math.acos(Math.min(1, cosd)) < sr) b *= 0.3;
+      }
+      out[i] = b;
     }
-    const c = makeCanvas(MT, MT);
-    c.getContext('2d').putImageData(img, 0, 0);
-    moonTex[view] = c;
+    for (let x = 0; x < MW; x++) { out[x] = out[MW + x]; out[(MH - 1) * MW + x] = out[(MH - 2) * MW + x]; }
+    moonMap = out;
   }
 
-  // night: 0 (lit as rendered) .. 1 (mostly dark). view: 'near' | 'far'
+  function buildEarthMap() {
+    const land = makeNoise(11), wet = makeNoise(23), cloud = makeNoise(37);
+    const N = MW * MH;
+    const rgb = new Uint8ClampedArray(N * 3), ocean = new Uint8Array(N), clouds = new Uint8Array(N);
+    for (let y = 0; y < MH; y++) for (let x = 0; x < MW; x++) {
+      const i = y * MW + x, X = rowCos[y] * colSin[x], Y = -rowSin[y], Z = rowCos[y] * colCos[x];
+      const h = land(X * 1.6 + 2, Y * 1.6, Z * 1.6, 6);
+      const lat = Math.abs(Y);
+      let r, g, b;
+      if (h > 0.53) {
+        const m = wet(X * 3, Y * 3, Z * 3, 4);
+        const desert = smooth(0.2, 0.42, lat) * (1 - smooth(0.45, 0.6, lat)) * smooth(0.45, 0.6, 1 - m);
+        const elev = smooth(0.53, 0.75, h);
+        r = lerp(46, 150, desert) + elev * 30; g = lerp(84, 124, desert) + elev * 20; b = lerp(42, 78, desert) + elev * 12;
+      } else {
+        const depth = smooth(0.35, 0.53, h);
+        r = lerp(6, 22, depth); g = lerp(26, 78, depth); b = lerp(66, 130, depth);
+        ocean[i] = 1;
+      }
+      if (lat > 0.82) { const ice = smooth(0.82, 0.9, lat); r = lerp(r, 232, ice); g = lerp(g, 238, ice); b = lerp(b, 245, ice); ocean[i] = 0; }
+      rgb[i * 3] = r; rgb[i * 3 + 1] = g; rgb[i * 3 + 2] = b;
+      clouds[i] = smooth(0.5, 0.72, cloud(X * 2.6 + 7, Y * 3.4, Z * 2.6, 6)) * 0.92 * 255;
+    }
+    earthMap = { rgb, ocean, clouds };
+  }
+
+  // Per-pixel lookup for a sphere seen with the view tilt: map row, relative longitude, sunlight.
+  // Built once; every globe canvas shares it.
+  function makeLUT(GS) {
+    const R = GS / 2, pix = [], [lx, ly, lz] = LIGHT, ct = Math.cos(TILT), st = Math.sin(TILT);
+    const hx = lx, hy = ly, hz = lz + 1, hl = Math.hypot(hx, hy, hz);
+    const rows = [], lonf = [], lamP = [], lam = [], edge = [], spec = [], rim = [];
+    for (let py = 0; py < GS; py++) for (let px = 0; px < GS; px++) {
+      const nx = (px + 0.5 - R) / R, ny = (py + 0.5 - R) / R, d2 = nx * nx + ny * ny;
+      if (d2 > 1) continue;
+      const nz = Math.sqrt(1 - d2), yv = -ny;
+      const yb = yv * ct - nz * st, zb = nz * ct + yv * st;
+      const la = Math.asin(Math.max(-1, Math.min(1, yb))), lo = Math.atan2(nx, zb);
+      const l = Math.max(0, nx * lx + ny * ly + nz * lz);
+      pix.push(py * GS + px);
+      rows.push(Math.min(MH - 1, Math.max(0, Math.floor((Math.PI / 2 - la) / Math.PI * MH))) * MW);
+      lonf.push(lo / TAU);
+      lam.push(l); lamP.push(0.05 + 1.1 * Math.pow(l, 0.85));
+      edge.push(clamp((1 - Math.sqrt(d2)) * R * 1.2) * 255);
+      spec.push(Math.pow(Math.max(0, (nx * hx + ny * hy + nz * hz) / hl), 70) * 170);
+      rim.push(Math.pow(1 - nz, 2.5) * (0.25 + l));
+    }
+    return { pix: Int32Array.from(pix), rows: Int32Array.from(rows), lonf: Float32Array.from(lonf), lam: Float32Array.from(lam), lamP: Float32Array.from(lamP),
+      edge: Uint8Array.from(edge), spec: Float32Array.from(spec), rim: Float32Array.from(rim) };
+  }
+  // Lookups and canvases come in three sizes; each globe uses the smallest that is sharp at its on-screen radius.
+  const LUTS = {}, globes = {};
+  const globeSize = r => (r <= 50 ? 128 : r <= 110 ? 256 : GS);
+  function globe(slot, size) {
+    const id = slot + '@' + size;
+    if (!LUTS[size]) LUTS[size] = makeLUT(size);
+    if (!globes[id]) { const c = makeCanvas(size, size), g = c.getContext('2d'); globes[id] = { canvas: c, g, img: g.createImageData(size, size), key: null, L: LUTS[size] }; }
+    return globes[id];
+  }
+
+  // Map column offset for a centre longitude (degrees): the texel column under the disc centre.
+  const colShift = lonDeg => ((lonDeg + 180) / 360 + 64);
+
+  function renderMoon(slot, lonDeg, size = GS) {
+    const G = globe(slot, size), key = Math.round(colShift(lonDeg) * MW);
+    if (G.key === key) return G.canvas;                // same orientation as last frame: reuse
+    const d = G.img.data, sh = colShift(lonDeg), L = G.L;
+    for (let k = 0; k < L.pix.length; k++) {
+      const b = moonMap[L.rows[k] + ((((L.lonf[k] + sh) * MW) | 0) & (MW - 1))] * L.lamP[k], o = L.pix[k] * 4;
+      d[o] = b * 238; d[o + 1] = b * 232; d[o + 2] = b * 224; d[o + 3] = L.edge[k];
+    }
+    G.g.putImageData(G.img, 0, 0); G.key = key;
+    return G.canvas;
+  }
+
+  function renderEarth(slot, lonDeg, cloudLonDeg, size = GS) {
+    const G = globe(slot, size), key = Math.round(colShift(lonDeg) * MW) * 1e6 + Math.round(colShift(cloudLonDeg) * MW);
+    if (G.key === key) return G.canvas;
+    const d = G.img.data, sh = colShift(lonDeg), shc = colShift(cloudLonDeg), { rgb, ocean, clouds } = earthMap, L = G.L;
+    for (let k = 0; k < L.pix.length; k++) {
+      const ti = L.rows[k] + ((((L.lonf[k] + sh) * MW) | 0) & (MW - 1)), ci = L.rows[k] + ((((L.lonf[k] + shc) * MW) | 0) & (MW - 1));
+      const l = L.lam[k], lit = 0.04 + 1.05 * l, sp = ocean[ti] ? L.spec[k] : 0;
+      let r = rgb[ti * 3] * lit + sp, g = rgb[ti * 3 + 1] * lit + sp, b = rgb[ti * 3 + 2] * lit + sp;
+      const ca = clouds[ci] / 255, cl = 245 * (0.05 + l);
+      r += (cl - r) * ca; g += (cl - g) * ca; b += (cl * 1.02 - b) * ca;
+      const rim = L.rim[k];
+      const o = L.pix[k] * 4;
+      d[o] = r + rim * 60; d[o + 1] = g + rim * 120; d[o + 2] = b + rim * 230; d[o + 3] = L.edge[k];
+    }
+    G.g.putImageData(G.img, 0, 0); G.key = key;
+    return G.canvas;
+  }
+
+  // ---- spin: Earth turns once per sidereal day, the Moon once per sidereal month (orbital dataset).
+  // During the journey the spin follows the mission clock; elsewhere it is a visible time-lapse.
+  const EARTH_DAY_H = () => NasaData.num('Earth|Sidereal rotation period', 'orbit') || 23.9345;
+  const MOON_DAY_H = () => NasaData.num('Moon orbit|Sidereal rotation period', 'orbit') || 655.72;
+  const LAPSE_H = 4;                          // time-lapse: 1 s of play = 4 h (Earth turns in ~6 s, Moon in ~2.7 min)
+  const lapseHours = t => t * LAPSE_H;
+  const spinCaption = (ctx, x, y, align = 'left') => text(ctx,
+    `TIME-LAPSE ×${(LAPSE_H * 3600).toLocaleString('en-US')} · Earth turns once per ${NasaData.show('Earth|Sidereal rotation period', 'orbit')}, Moon once per ${NasaData.show('Moon orbit|Sidereal rotation period', 'orbit')}`,
+    x, y, { align, size: 9.5, color: COL.faint });
+  // Surface drifts west-to-east (prograde), so the longitude facing us decreases with time.
+  const earthLon = h => -360 * h / EARTH_DAY_H();
+  const moonLon = h => -360 * h / MOON_DAY_H();
+
+  // night: 0 (lit as rendered) .. 1 (mostly dark). view: 'near' | 'far'.
+  // lon: explicit centre longitude (deg) for a spinning Moon; otherwise the fixed view is used.
   function moon(ctx, x, y, r, o = {}) {
     glow(ctx, x, y, r * 1.18, 'rgba(200,210,230,ALPHA)', 0.06);
-    ctx.drawImage(moonTex[o.view || 'near'] || moonTex.near, x - r, y - r, r * 2, r * 2);
+    const lon = o.lon != null ? o.lon : VIEWS[o.view || 'near'];
+    ctx.drawImage(renderMoon(o.slot || (o.view === 'far' ? 'moon:far' : 'moon:a'), lon, globeSize(r * ctx.getTransform().a)), x - r, y - r, r * 2, r * 2);
     if (o.night > 0) {
       ctx.save();
       ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.clip();
@@ -278,6 +378,14 @@ const Draw = (() => {
   }
   const targetPos = (x, y, r, view) => { const p = regionOffset(region(), view); return { x: x + p.x * r, y: y + p.y * r, visible: p.visible }; };
 
+  // Earth with atmosphere halo. h = hours of rotation to show (clouds drift a little faster).
+  function earth(ctx, x, y, r, h = 0) {
+    const halo = ctx.createRadialGradient(x, y, r * 0.96, x, y, r * 1.12);
+    halo.addColorStop(0, 'rgba(90,150,255,0.35)'); halo.addColorStop(1, 'rgba(90,150,255,0)');
+    ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(x, y, r * 1.12, 0, TAU); ctx.fill();
+    ctx.drawImage(renderEarth('earth:a', 60 + earthLon(h), 60 + earthLon(h * 1.08), globeSize(r * ctx.getTransform().a)), x - r, y - r, r * 2, r * 2);
+  }
+
   function targetMarker(ctx, x, y, t, color = COL.amber, size = 1) {
     ctx.save();
     ctx.strokeStyle = color; ctx.lineWidth = 1;
@@ -293,62 +401,6 @@ const Draw = (() => {
     ctx.moveTo(x - 5 * size, y); ctx.lineTo(x + 5 * size, y); ctx.moveTo(x, y - 5 * size); ctx.lineTo(x, y + 5 * size);
     ctx.stroke();
     ctx.restore();
-  }
-
-  // ================================================================ EARTH
-  const ET = 512;
-  let earthTex = null;
-  function buildEarth() {
-    const R = ET / 2, land = makeNoise(11), wet = makeNoise(23), cloud = makeNoise(37);
-    const img = new ImageData(ET, ET), px4 = img.data;
-    const [lx, ly, lz] = LIGHT;
-    const hx = lx, hy = ly, hz = lz + 1, hl = Math.hypot(hx, hy, hz);
-    for (let py = 0; py < ET; py++) for (let px = 0; px < ET; px++) {
-      const nx = (px + 0.5 - R) / R, ny = (py + 0.5 - R) / R, d2 = nx * nx + ny * ny;
-      if (d2 > 1) continue;
-      const nz = Math.sqrt(1 - d2), dist = Math.sqrt(d2);
-      // rotate the globe a little so interesting continents face the viewer
-      const X = nx * 0.8 + nz * 0.6, Z = -nx * 0.6 + nz * 0.8, Y = ny;
-      const h = land(X * 1.6 + 2, Y * 1.6, Z * 1.6, 6);
-      const lat = Math.abs(Y);
-      let r, g, b;
-      const isLand = h > 0.53;
-      if (isLand) {
-        const m = wet(X * 3, Y * 3, Z * 3, 4);
-        const desert = smooth(0.2, 0.42, lat) * (1 - smooth(0.45, 0.6, lat)) * smooth(0.45, 0.6, 1 - m);
-        const elev = smooth(0.53, 0.75, h);
-        r = lerp(46, 150, desert) + elev * 30; g = lerp(84, 124, desert) + elev * 20; b = lerp(42, 78, desert) + elev * 12;
-      } else {
-        const depth = smooth(0.35, 0.53, h);
-        r = lerp(6, 22, depth); g = lerp(26, 78, depth); b = lerp(66, 130, depth);
-      }
-      if (lat > 0.82) { const ice = smooth(0.82, 0.9, lat); r = lerp(r, 232, ice); g = lerp(g, 238, ice); b = lerp(b, 245, ice); }
-      const lam = Math.max(0, nx * lx + ny * ly + nz * lz);
-      let spec = 0;
-      if (!isLand) spec = Math.pow(Math.max(0, (nx * hx + ny * hy + nz * hz) / hl), 70) * 170;
-      r = r * (0.04 + 1.05 * lam) + spec; g = g * (0.04 + 1.05 * lam) + spec; b = b * (0.04 + 1.05 * lam) + spec;
-      // clouds
-      const cv = cloud(X * 2.6 + 7, Y * 3.4, Z * 2.6, 6);
-      const ca = smooth(0.5, 0.72, cv) * 0.92;
-      const cl = 245 * (0.05 + 1.0 * lam);
-      r = lerp(r, cl, ca); g = lerp(g, cl, ca); b = lerp(b, cl * 1.02, ca);
-      // atmospheric scattering at the limb
-      const rim = Math.pow(1 - nz, 2.5) * (0.25 + lam);
-      r += rim * 60; g += rim * 120; b += rim * 230;
-      const o = (py * ET + px) * 4;
-      px4[o] = Math.min(255, r); px4[o + 1] = Math.min(255, g); px4[o + 2] = Math.min(255, b);
-      px4[o + 3] = clamp((1 - dist) * R * 1.2) * 255;
-    }
-    const c = makeCanvas(ET, ET);
-    c.getContext('2d').putImageData(img, 0, 0);
-    earthTex = c;
-  }
-
-  function earth(ctx, x, y, r) {
-    const halo = ctx.createRadialGradient(x, y, r * 0.96, x, y, r * 1.12);
-    halo.addColorStop(0, 'rgba(90,150,255,0.35)'); halo.addColorStop(1, 'rgba(90,150,255,0)');
-    ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(x, y, r * 1.12, 0, TAU); ctx.fill();
-    ctx.drawImage(earthTex, x - r, y - r, r * 2, r * 2);
   }
 
   // ================================================================ SPACECRAFT
@@ -730,35 +782,58 @@ const Draw = (() => {
 
   S.TITLE = (ctx, t) => {
     background(ctx, t, 2);
-    earth(ctx, 150, 130, 40);
+    const lh = lapseHours(t);
+    earth(ctx, 150, 130, 40, lh);
     const mx = 930, my = 420, mr = 230, rot = -0.28;
     const p = onEllipse(mx, my, 320, 70, rot, t * 0.3);
     orbitHalf(ctx, mx, my, 320, 70, rot, false, COL.cyan, 0.8, 0.3);
     if (!p.front) spacecraft(ctx, p.x, p.y, 0.6, Math.sin(t) * 0.1, craftCfg(), t);
-    moon(ctx, mx, my, mr);
+    moon(ctx, mx, my, mr, { lon: moonLon(lh) });
     orbitHalf(ctx, mx, my, 320, 70, rot, true, COL.cyan, 1, 0.5);
     if (p.front) spacecraft(ctx, p.x, p.y, 1, Math.sin(t) * 0.1, craftCfg(), t);
   };
 
-  const BRIEF = { e: { x: 170, y: 480 }, c: { x: 380, y: 170 }, m: { x: 680, y: 220 } };
+  // Briefing: the Moon circles Earth on a (tilted, not-to-scale) orbit. Both spin on the same time-lapse
+  // clock; because the Moon's rotation period equals its orbital period, the same face keeps pointing at Earth.
+  const BRIEF = { e: { x: 390, y: 400, r: 82 }, rx: 318, ry: 112, mr: 46 };
   S.BRIEFING = (ctx, t) => {
     background(ctx, t, 2); grid(ctx);
-    earth(ctx, BRIEF.e.x, BRIEF.e.y, 85);
-    moon(ctx, BRIEF.m.x, BRIEF.m.y, 52);
-    const p0 = { x: 240, y: 430 }, p2 = { x: 630, y: 235 };
-    route(ctx, p0, BRIEF.c, p2, t, 0);
-    const pr = (t * 0.1) % 1, q = qb(p0, BRIEF.c, p2, pr), q2 = qb(p0, BRIEF.c, p2, Math.min(1, pr + 0.01));
-    spacecraft(ctx, q.x, q.y, 0.5, Math.atan2(q2.y - q.y, q2.x - q.x), craftCfg(), t);
-    tag(ctx, 'EARTH', BRIEF.e.x, BRIEF.e.y + 108, COL.label, 'center');
-    tag(ctx, 'MOON', BRIEF.m.x, BRIEF.m.y + 72, COL.label, 'center');
-    tag(ctx, `MEAN DISTANCE ${NasaData.show('Mean distance from Earth (semi-major axis)', '')}`, BRIEF.m.x, BRIEF.m.y + 90, COL.faint, 'center');
-    tag(ctx, 'SURVEY TARGET · YOUR CHOICE', BRIEF.m.x, BRIEF.m.y - 70, COL.amber, 'center');
-    for (const reg of Object.values(REGIONS)) {
-      if (reg.side === 'far') continue;
-      const p = project(reg.lat, reg.lon, 'near');
-      ctx.fillStyle = `rgba(232,165,75,${0.5 + 0.4 * Math.sin(t * 3 + reg.lat)})`;
-      ctx.fillRect(BRIEF.m.x + p.x * 52 - 1.5, BRIEF.m.y + p.y * 52 - 1.5, 3, 3);
-    }
+    const E = BRIEF.e;
+    const th = 0.55 - TAU * lapseHours(Game.sceneT) / MOON_DAY_H();   // orbital angle; starts front-right, moves prograde
+    const d = Math.sin(th), k = 1 + 0.12 * d;                  // d > 0: in front of Earth (closer to us)
+    const mx = E.x + Math.cos(th) * BRIEF.rx, my = E.y + d * BRIEF.ry, mr = BRIEF.mr * k;
+    const faceLon = th / D2R + 90;                             // longitude facing the viewer: near side toward Earth
+    const orbit = front => {
+      ctx.save(); ctx.strokeStyle = COL.cyan; ctx.globalAlpha = front ? 0.45 : 0.2; ctx.lineWidth = 1; ctx.setLineDash([4, 6]);
+      ctx.beginPath(); ctx.ellipse(E.x, E.y, BRIEF.rx, BRIEF.ry, 0, front ? 0 : Math.PI, front ? Math.PI : TAU); ctx.stroke(); ctx.restore();
+    };
+    const drawMoon = () => {
+      moon(ctx, mx, my, mr, { lon: faceLon });
+      for (const reg of Object.values(REGIONS)) {
+        const p = project(reg.lat, reg.lon, 'near', faceLon);
+        if (!p.visible) continue;
+        ctx.fillStyle = `rgba(232,165,75,${0.5 + 0.4 * Math.sin(t * 3 + reg.lat)})`;
+        ctx.fillRect(mx + p.x * mr - 1.5, my + p.y * mr - 1.5, 3, 3);
+      }
+    };
+    orbit(false);
+    if (d < 0) drawMoon();
+    earth(ctx, E.x, E.y, E.r, lapseHours(t));
+    // LUNA-01 waiting in its parking orbit
+    const pa = t * 0.9, pf = Math.sin(pa) > 0;
+    const craft = () => spacecraft(ctx, E.x + Math.cos(pa) * 118, E.y + Math.sin(pa) * 30, 0.4, 0, craftCfg(), t);
+    if (!pf) craft();
+    ctx.save(); ctx.beginPath(); ctx.ellipse(E.x, E.y, 118, 30, 0, 0, TAU); ctx.strokeStyle = 'rgba(80,200,230,0.18)'; ctx.stroke(); ctx.restore();
+    if (pf) craft();
+    orbit(true);
+    if (d >= 0) drawMoon();
+    tag(ctx, 'EARTH', E.x, E.y + E.r + 50, COL.label, 'center');
+    tag(ctx, 'MOON', mx, my + mr + 18, COL.label, 'center');
+    tag(ctx, 'SURVEY TARGET · YOUR CHOICE', mx, my - mr - 12, COL.amber, 'center');
+    tag(ctx, `MEAN DISTANCE ${NasaData.show('Mean distance from Earth (semi-major axis)', '')} · ORBIT ${NasaData.show('Moon orbit|Sidereal revolution period', 'orbit')}`, E.x, 640, COL.faint, 'center');
+    text(ctx, 'Tidally locked: the Moon spins once per orbit, so the same face always points at Earth', E.x, 660, { align: 'center', size: 10, color: COL.label });
+    spinCaption(ctx, E.x, 678, 'center');
+    text(ctx, 'Orbit drawn tilted and not to scale', E.x, 694, { align: 'center', size: 9.5, color: COL.faint });
   };
 
   // Target selection: nearside globe with the candidate regions and the Apollo landing sites
@@ -959,7 +1034,7 @@ const Draw = (() => {
       if (flash > 0) { ctx.fillStyle = `rgba(0,0,0,${flash})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
     } else {
       background(ctx, t, 18);
-      earth(ctx, 420, 1560, 1000);
+      earth(ctx, 420, 1560, 1000, t);                        // slower time-lapse (1 s = 1 h) for the close-up horizon
       const st = lt - LT.space;
       const fade = 1 - clamp(st / 0.5);
       const ux = 200 + st * 60, uy = 320 - st * 12;
@@ -1039,12 +1114,13 @@ const Draw = (() => {
     ctx.translate(SC.x, SC.y); ctx.scale(cam.z, cam.z); ctx.translate(-cam.c.x, -cam.c.y);
     const lw = 1 / cam.z;
     // Earth + parking orbit
-    earth(ctx, TJ.e.x, TJ.e.y, TJ.e.r);
+    const met = journeyMET();                                   // spin follows mission elapsed time
+    earth(ctx, TJ.e.x, TJ.e.y, TJ.e.r, met);
     ctx.save(); ctx.strokeStyle = COL.cyan; ctx.lineWidth = 1.2 * lw;
     ctx.globalAlpha = ph === 'parking' ? 0.7 : 0.25; ctx.setLineDash(ph === 'parking' ? [] : [3 * lw, 5 * lw]);
     ctx.beginPath(); ctx.arc(TJ.e.x, TJ.e.y, TJ.rp, 0, TAU); ctx.stroke(); ctx.restore();
     // Moon + lunar orbit
-    moon(ctx, TJ.m.x, TJ.m.y, TJ.m.r);
+    moon(ctx, TJ.m.x, TJ.m.y, TJ.m.r, { lon: moonLon(met) });
     if (ph === 'loi' || ph === 'arrived') {
       ctx.save(); ctx.strokeStyle = COL.green; ctx.globalAlpha = 0.6; ctx.lineWidth = 1.2 * lw;
       ctx.beginPath(); ctx.arc(TJ.m.x, TJ.m.y, TJ.rl, 0, TAU); ctx.stroke(); ctx.restore();
@@ -1137,10 +1213,11 @@ const Draw = (() => {
     background(ctx, t, 1.5); grid(ctx, 0.022);
     const k = 1.0, off = { x: 0, y: 44 };                    // journey view, shifted clear of the headline text
     ctx.save(); ctx.translate(off.x, off.y); ctx.translate(SC.x, SC.y); ctx.scale(k, k); ctx.translate(-SC.x, -SC.y);
-    earth(ctx, TJ.e.x, TJ.e.y, TJ.e.r);
+    const lh = lapseHours(t);
+    earth(ctx, TJ.e.x, TJ.e.y, TJ.e.r, lh);
     ctx.save(); ctx.strokeStyle = COL.cyan; ctx.globalAlpha = 0.45; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(TJ.e.x, TJ.e.y, TJ.rp, 0, TAU); ctx.stroke(); ctx.restore();
-    moon(ctx, TJ.m.x, TJ.m.y, TJ.m.r);
+    moon(ctx, TJ.m.x, TJ.m.y, TJ.m.r, { lon: moonLon(lh) });
     ctx.save(); ctx.strokeStyle = COL.green; ctx.globalAlpha = 0.4; ctx.beginPath(); ctx.arc(TJ.m.x, TJ.m.y, TJ.rl, 0, TAU); ctx.stroke(); ctx.restore();
     const active = Game.preview || Game.choice;
     const d = computeDesign(Game.sel);
@@ -1187,7 +1264,7 @@ const Draw = (() => {
     const p = onEllipse(OR.x, OR.y, OR[act][0], OR[act][1], OR.rot, t * (act === 'low' ? 0.8 : 0.5));
     const cfg = craftCfg();
     if (!p.front) spacecraft(ctx, p.x, p.y, 0.5, Math.sin(t) * 0.2, cfg, t);
-    moon(ctx, OR.x, OR.y, OR.r);
+    moon(ctx, OR.x, OR.y, OR.r, { lon: moonLon(lapseHours(t)) });
     for (const id of ['high', 'low']) { const [c, w, a] = orbitStyle(id); orbitHalf(ctx, OR.x, OR.y, OR[id][0], OR[id][1], OR.rot, true, c, w, a); }
     if (p.front) spacecraft(ctx, p.x, p.y, 0.75, Math.sin(t) * 0.2, cfg, t, { thrust: Game.phase === 'inserting' });
     const lp = onEllipse(OR.x, OR.y, OR.low[0], OR.low[1], OR.rot, 1.25), hp = onEllipse(OR.x, OR.y, OR.high[0], OR.high[1], OR.rot, 1.1);
@@ -1321,7 +1398,7 @@ const Draw = (() => {
   S.TRANSMISSION = (ctx, t, dt) => {
     background(ctx, t, 2); grid(ctx, 0.02);
     moon(ctx, TX.m.x, TX.m.y, TX.m.r);
-    earth(ctx, TX.e.x, TX.e.y, TX.e.r);
+    earth(ctx, TX.e.x, TX.e.y, TX.e.r, lapseHours(t));
     const tp = targetPos(TX.m.x, TX.m.y, TX.m.r, 'near');
     if (!tp.visible) tag(ctx, 'FAR SIDE TARGET · BEHIND THE LIMB', tp.x + 10, tp.y - 14, COL.amber);
     const sending = Game.phase === 'sending';
@@ -1375,8 +1452,8 @@ const Draw = (() => {
   S.RESULT = (ctx, t) => {
     background(ctx, t, 2); grid(ctx, 0.02);
     const st = M.missionStatus, color = st === 'SUCCESS' ? COL.green : st === 'FAILURE' ? COL.red : COL.amber;
-    earth(ctx, 180, 470, 78);
-    moon(ctx, 690, 215, 52);
+    earth(ctx, 180, 470, 78, lapseHours(t));
+    moon(ctx, 690, 215, 52, { lon: moonLon(lapseHours(t)) });
     const p0 = { x: 240, y: 425 }, p1 = { x: 400, y: 120 }, p2 = { x: 640, y: 230 };
     const prog = clamp(Game.sceneT / 1.5);
     route(ctx, p0, p1, p2, t, st === 'FAILURE' ? Math.min(prog, 0.85) : prog, color, st !== 'FAILURE');
@@ -1402,8 +1479,8 @@ const Draw = (() => {
 
   S.REPORT = (ctx, t) => {
     background(ctx, t, 1); grid(ctx, 0.025);
-    moon(ctx, 1180, 700, 260);
-    earth(ctx, 90, 90, 30);
+    moon(ctx, 1180, 700, 260, { lon: moonLon(lapseHours(t)) });
+    earth(ctx, 90, 90, 30, lapseHours(t));
   };
 
   function frame(ctx, t, dt) {
@@ -1413,7 +1490,7 @@ const Draw = (() => {
     ctx.restore();
   }
 
-  function init() { buildStars(); buildMoon('near'); buildEarth(); setTimeout(() => buildMoon('far'), 60); }
+  function init() { buildStars(); buildMoonMap(); buildEarthMap(); }
 
   const surveyTarget = () => targetPos(SV.x, SV.y, SV.r);
 

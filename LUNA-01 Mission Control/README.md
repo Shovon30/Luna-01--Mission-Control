@@ -25,9 +25,18 @@ Controls: mouse. Keys `1`–`5` (or `A`–`D`) pick decision options. `M` toggle
 ## Tech
 
 HTML5, CSS3, vanilla JavaScript, Canvas 2D and the Web Audio API. It uses no libraries, no image files and no audio files.
-Every visual is drawn by code. The Moon (nearside and farside) and the Earth are generated pixel by pixel at startup on a real
-latitude/longitude grid. The major maria and named craters (Tycho, Copernicus and others) sit in their approximate real places,
-so the Apollo landing sites from the dataset land on the right terrain. The spacecraft shows the protection kit you fitted.
+Every visual is drawn by code. The Moon and the Earth are generated at startup as longitude/latitude surface maps. The
+major maria and named craters (Tycho, Copernicus and others) sit in their approximate real places, so the Apollo landing
+sites from the dataset land on the right terrain. Each frame the maps are wrapped onto spheres through a precomputed
+per-pixel lookup, so both globes **spin** while sunlight stays fixed:
+
+- Rotation periods come from the orbital dataset: Earth 23.9345 h, Moon 655.72 h (sidereal).
+- **During the journey** both spin at the real rate on the mission clock (MET). Earth turns about three times on a 3-day
+  transfer and the Moon about 40°.
+- **Elsewhere** they spin on a labelled time-lapse (1 s = 4 h).
+- **In the briefing** the Moon also circles Earth. Because its rotation period equals its orbital period (tidal lock), the
+  same face keeps pointing at Earth.
+- The target, survey and downlink views keep the Moon still, so the target markers stay on their sites. The spacecraft shows the protection kit you fitted.
 Hazards have their own visuals: meteoroid swarms, venting propellant, computer glitches, solar-storm glare and clinging dust.
 All sound is synthesized through a compressor. That includes the mission-control ambience, NASA-style Quindar tones, the
 master alarm, a launch explosion with camera shake, and hazard sounds: proximity pings, hissing leaks, glitches, static and impacts.
