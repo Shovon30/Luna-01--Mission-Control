@@ -1,0 +1,31 @@
+category,parameter,value,unit,game_note,source_name,source_url
+Moon orbit,Semi-major axis (mean Earth-Moon distance),384400,km,Default transfer target distance,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Perigee (closest),363300,km,,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Apogee (farthest),405500,km,,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Orbital eccentricity,0.0549,-,Nearly circular,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Inclination to ecliptic,5.145,deg,,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Inclination to Earth's equator,18.28-28.58,deg,Varies over an 18.6-yr cycle; affects launch windows,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Sidereal revolution period,27.3217,days,One orbit relative to stars,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Synodic period (new moon to new moon),29.53,days,Lunar day-night cycle,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Mean orbital velocity,1.022,km/s,,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Max orbital velocity,1.082,km/s,At perigee,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Min orbital velocity,0.97,km/s,At apogee,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Sidereal rotation period,655.72,hours,Equals orbit period: same face always toward Earth (tidal lock),NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Obliquity to orbit,6.68,deg,,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Moon orbit,Recession rate from Earth,3.8,cm/year,Moon slowly drifting away,NASA NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Earth,Mass,5.9722e+24,kg,,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth,Equatorial radius,6378.137,km,,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth,Surface gravity (mean),9.82,m/s^2,,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth,Escape velocity,11.186,km/s,,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth,GM (gravitational parameter),398600,km^3/s^2,Use for orbit/transfer calculations,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth,Sidereal rotation period,23.9345,hours,,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth,Obliquity (axial tilt),23.44,deg,,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth orbit,Semi-major axis around Sun,149598000.0,km,,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth orbit,Perihelion,147095000.0,km,,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth orbit,Aphelion,152100000.0,km,,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth orbit,Sidereal orbit period,365.256,days,,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth orbit,Mean orbital velocity,29.78,km/s,,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth orbit,Orbital eccentricity,0.0167,-,,NASA NSSDCA Earth Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html
+Earth-Moon system,Earth/Moon mass ratio,81.3,ratio,DERIVED from NASA masses,Derived from NSSDCA fact sheets,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Earth-Moon system,Barycenter distance from Earth's center,4671,km,DERIVED; lies inside Earth (radius 6378 km),Derived from NSSDCA fact sheets,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html
+Earth-Moon system,One-way light/radio delay at mean distance,1.282,s,DERIVED; comms delay mechanic,Derived from NSSDCA Moon Fact Sheet,https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html

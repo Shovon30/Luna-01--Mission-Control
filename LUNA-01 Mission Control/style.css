@@ -322,3 +322,55 @@ button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 #toast.show { opacity: 1; transform: none; }
 #toast b { color: var(--cyan); font: 600 10.5px var(--mono); letter-spacing: 0.16em; }
 #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font: 500 11px var(--mono); letter-spacing: 0.3em; z-index: 20; background: var(--bg); }
+
+/* ------------------------------------------------------------------ targets, kits, threats, hazards, facts */
+.opts.compact .opt { padding: 6px 10px; }
+.opts.compact .chip, .opt.selected .chips .chip { white-space: normal; }
+.opt-badge { font: 600 8.5px var(--mono); letter-spacing: 0.12em; color: var(--dim); border: 1px solid var(--line-2); padding: 1px 5px; white-space: nowrap; }
+.opt.kitopt { border-color: rgba(79,195,138,0.5); }
+.opt.kitopt .opt-badge { color: var(--green); border-color: rgba(79,195,138,0.5); }
+.pitch { margin: 0 0 4px; font-size: 12.5px; color: var(--text); }
+.panel.target .data { margin-top: 2px; }
+
+.cards5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.cards5 .dcard { padding: 6px 8px; }
+.cards5 .dc-name { font-size: 12px; }
+.dc-tgt { font: 500 10px var(--mono); color: var(--dim); margin-top: 2px; }
+.dc-tgt.good { color: var(--green); } .dc-tgt.bad { color: #e08672; }
+.dc-tgt.threat-high { color: var(--red); } .dc-tgt.threat-moderate { color: var(--amber); } .dc-tgt.threat-low { color: var(--faint); }
+
+.threats { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 6px 0 0; font: 500 10.5px var(--mono); }
+.th-l { color: var(--dim); letter-spacing: 0.16em; font-size: 9.5px; margin-right: 4px; }
+.threat { border: 1px solid var(--line-2); padding: 1px 6px; color: var(--dim); white-space: nowrap; }
+.threat b { font-weight: 700; }
+.threat.high { border-color: rgba(229,83,75,0.55); color: #f0a49c; } .threat.high b { color: var(--red); }
+.threat.moderate { border-color: rgba(232,165,75,0.45); } .threat.moderate b { color: var(--amber); }
+.threat.low b { color: var(--green); }
+
+.fact { margin: 10px 0 0; padding: 8px 10px; border: 1px solid var(--line); border-left: 2px solid #b9a6e0; font-size: 12.5px; color: var(--text); display: flex; flex-direction: column; gap: 3px; min-height: 58px; }
+.fact.in { animation: panelIn 0.4s ease; }
+.f-k { font: 600 9px var(--mono); letter-spacing: 0.2em; color: #b9a6e0; }
+.fact .tag { align-self: flex-start; margin-left: 0; }
+
+.dec.hz { border-left: 2px solid var(--red); }
+.cond-badge.tgt { color: var(--cyan); border-color: rgba(124,199,232,0.4); }
+
+/* compact design grid (4 component slots) */
+.panel.wide { top: 90px; max-height: 624px; }
+.panel.wide .group { margin-bottom: 5px; }
+.panel.wide .group h3 { margin-bottom: 3px; }
+.panel.wide .dcard { line-height: 1.3; padding: 5px 9px; }
+.panel.wide .dcard.selected { padding: 5px 9px; }
+.dc-name { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.dc-name .dc-tgt { margin: 0; font-size: 9.5px; white-space: nowrap; }
+.panel.wide .tiles { margin-top: 6px; }
+.panel.wide .tile { padding: 4px 8px; }
+.panel.wide .tile b { font-size: 16px; }
+.panel.wide .threats { margin-top: 5px; }
+
+/* report: 5-column decision grid (more log entries with hazards) */
+.panel.report .decs { grid-template-columns: repeat(5, 1fr); }
+.panel.report .dec { padding: 4px 8px; font-size: 12px; line-height: 1.3; }
+.panel.report .dec .chip { font-size: 10px; padding: 0 5px; }
+.panel.report .tiles.four .tile { padding: 5px 9px; }
+.panel.report .tiles.four .tile b { font-size: 17px; }

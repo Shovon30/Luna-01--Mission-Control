@@ -1,7 +1,7 @@
 // Mission model: option tables, the central mission state, and the
 // simplified gameplay formulas. EVERY number in this file is a SIMPLIFIED
 // GAME MODEL value chosen for balance - none of them is a NASA measurement.
-// Real lunar values come only from data/moon_environment_dataset.csv.
+// Real lunar values come only from the CSV datasets in data/ (see src/data.js).
 
 const RULES = {
   startBudget: 100,     // $M (a mission condition may cut this)
@@ -16,7 +16,7 @@ const RULES = {
   lowFuel: 10,          // below this after orbit: +risk (thin propellant margin)
   riskHigh: 40,         // >= : data-loss anomaly during transmission
   riskCritical: 75,     // >= : spacecraft enters safe mode, mission lost
-  anomalyLoss: 0.2,    // fraction of data lost to a high-risk anomaly
+  anomalyLoss: 0.2,     // fraction of data lost to a high-risk anomaly
 };
 
 // Mission conditions: one is drawn at random for every run and announced in the
@@ -25,30 +25,72 @@ const RULES = {
 const SCENARIOS = {
   solar: {
     id: 'solar', name: 'Solar Maximum', icon: '☀',
-    brief: 'The Sun is near peak activity. Solar particle storms threaten an unshielded spacecraft.',
-    effects: ['Every risk increase is ×1.5', 'Radiation Sensor gains +10 science per scan'],
+    brief: 'The Sun is near peak activity. Solar particle storms and bit-flips are far more likely.',
+    effects: ['Every risk increase is ×1.5', 'Radiation Sensor gains +10 science per scan', 'Solar-storm and computer-upset threat HIGH'],
     nasa: 'Unshielded dose from Aug 1972 solar particle event (estimate)', nasaLabel: 'Aug 1972 solar storm, unshielded dose',
     riskMult: 1.5, bonus: { radiation: 10 },
   },
   night: {
-    id: 'night', name: 'Long Polar Night', icon: '☾',
-    brief: 'The target crater will sit in darkness for most of the survey. Heaters will run hard.',
-    effects: ['Lunar-night drain 24% (battery: 8%)', 'Using reserve power costs 22% (battery: 8%)'],
-    nasa: 'Coldest measured temperature (permanently shadowed craters)', nasaLabel: 'Coldest measured temperature',
-    drain: 24, batteryDrain: 8, reserve: 22, batteryReserve: 8,
+    id: 'night', name: 'Long Lunar Night', icon: '☾',
+    brief: 'The survey will run deep into a lunar night. Heaters will run hard with no sunlight on the panels.',
+    effects: ['Lunar-night drain ×1.5 (battery absorbs most)', 'Using reserve power costs 20% (battery: 8%)'],
+    nasa: 'Synodic period (sunrise to sunrise)', nasaLabel: 'Lunar day + night cycle',
+    drainMult: 1.5, reserve: 20, batteryReserve: 8,
   },
   budget: {
     id: 'budget', name: 'Budget Cut', icon: '$',
-    brief: 'Funding was reduced after mission approval. Every dollar has to count.',
+    brief: 'Funding was reduced after mission approval. Every dollar - and every protection kit - has to count.',
     effects: ['Budget cap $80M instead of $100M'],
     budget: 80,
   },
   ice: {
     id: 'ice', name: 'Ice Hunt', icon: '❄',
-    brief: 'Mission scientists want proof of polar water ice. The bar for success is higher.',
-    effects: ['Science goal raised to 80', 'Spectrometer gains +10 science per scan'],
+    brief: 'Mission scientists want proof of polar water ice. The bar for success is higher everywhere.',
+    effects: ['Science goal raised to 80', 'Spectrometer +8 per scan at the South Pole'],
     nasa: 'Water in LCROSS impact plume (Cabeus crater; south pole)', nasaLabel: 'LCROSS plume water (Cabeus)',
-    goal: 80, bonus: { spectrometer: 10 },
+    goal: 80, bonus: { spectrometer: 8 }, bonusRegion: 'south_pole',
+  },
+};
+
+// Survey targets. Coordinates of Apollo sites come from the regions CSV (dataKey);
+// lat/lon without a dataKey are approximate, for map placement only.
+const REGIONS = {
+  south_pole: {
+    id: 'south_pole', name: 'South Polar Region', short: 'SOUTH POLE', site: 'Cabeus crater area', side: 'near',
+    lat: -84.9, lon: -35.5, kind: 'Polar · permanently shadowed craters',
+    pitch: 'Water ice may be trapped in craters that never see sunlight.',
+    sci: 1.1, bonus: { camera: -8, radiation: 4, spectrometer: 10 }, drain: 1.15, tx: 1.0, txRisk: 0, fuel: 3, dust: 0.8,
+    gain: 'Water-ice science: Spectrometer +10, science ×1.1', loss: 'Darkest, coldest target: night drain ×1.15, Camera −8, −3% fuel plane change',
+  },
+  tranquillitatis: {
+    id: 'tranquillitatis', name: 'Mare Tranquillitatis Pit', short: 'TRANQUILLITATIS', site: 'Near the Apollo 11 landing site', side: 'near',
+    dataKey: 'Apollo 11 - Mare Tranquillitatis|Lunar Module landing coordinates', lat: 0.67416, lon: 23.47314,
+    kind: 'Mare (lava plain) · nearside equatorial',
+    pitch: 'A 100 m pit with a shadowed overhang that stays near room temperature.',
+    sci: 0.9, bonus: { camera: 12, radiation: 2, spectrometer: 4 }, drain: 0.9, tx: 0.8, txRisk: 0, fuel: 0, dust: 1.0,
+    gain: 'Pit imaging: Camera +12 · Earth overhead: downlink −20% power', loss: 'Apollo 11 already sampled this mare: science ×0.9',
+  },
+  marius: {
+    id: 'marius', name: 'Marius Hills Pit', short: 'MARIUS HILLS', site: 'Oceanus Procellarum (location approximate)', side: 'near',
+    lat: 14.1, lon: -56.8, kind: 'Possible lava-tube skylight · nearside',
+    pitch: 'A skylight into a lava tube - a candidate radiation shelter for future explorers.',
+    sci: 1.0, bonus: { camera: 4, radiation: 12, spectrometer: 0 }, drain: 1.0, tx: 0.85, txRisk: 0, fuel: 2, dust: 1.0,
+    gain: 'Shelter study: Radiation Sensor +12 · downlink −15% power', loss: 'Little new composition data: Spectrometer +0, −2% fuel',
+  },
+  descartes: {
+    id: 'descartes', name: 'Descartes Highlands', short: 'DESCARTES', site: 'Apollo 16 landing region', side: 'near',
+    dataKey: 'Apollo 16 - Descartes Highlands|Lunar Module landing coordinates', lat: -8.9734, lon: 15.5011,
+    kind: 'Highlands (bright terrain) · central nearside',
+    pitch: 'Ancient calcium- and aluminium-rich crust under the deepest regolith.',
+    sci: 1.05, bonus: { camera: 0, radiation: 4, spectrometer: 12 }, drain: 1.0, tx: 0.9, txRisk: 0, fuel: 2, dust: 2.4,
+    gain: 'Old crust chemistry: Spectrometer +12, science ×1.05', loss: 'Deep dusty regolith: HIGH dust threat in low orbit',
+  },
+  farside: {
+    id: 'farside', name: 'Far Side Highlands', short: 'FAR SIDE', site: 'Beyond the lunar limb (location illustrative)', side: 'far',
+    lat: 15, lon: 175, kind: 'Farside highlands · never visible from Earth',
+    pitch: 'The least-explored hemisphere, with a thicker crust than the nearside.',
+    sci: 1.25, bonus: { camera: 4, radiation: 6, spectrometer: 6 }, drain: 1.0, tx: 1.4, txRisk: 8, fuel: 5, dust: 1.2,
+    gain: 'Least explored: all science ×1.25', loss: 'No line of sight to Earth: downlink +40% power & +8 risk, −5% fuel',
   },
 };
 
@@ -60,11 +102,11 @@ const ROCKETS = {
     id: 'light', name: 'Light Rocket', role: 'Low cost / low capacity',
     cost: 15, capacity: 520, fuel: 60, propellantMass: 120, comm: 10, risk: 5,
     antenna: 'Compact antenna', antennaSize: 8,
-    gain: 'Cheapest launch', loss: 'Tight mass limit, little fuel',
+    gain: 'Cheapest launch', loss: 'Tight mass, little fuel, leak-prone',
   },
   medium: {
     id: 'medium', name: 'Medium Rocket', role: 'Balanced',
-    cost: 30, capacity: 580, fuel: 85, propellantMass: 150, comm: 20, risk: 0,
+    cost: 30, capacity: 600, fuel: 85, propellantMass: 150, comm: 20, risk: 0,
     antenna: 'Standard dish', antennaSize: 12,
     gain: 'Good fuel, standard dish', loss: 'Moderate cost',
   },
@@ -97,19 +139,28 @@ const POWER_SYSTEMS = {
 const INSTRUMENTS = {
   camera: {
     id: 'camera', name: 'Camera', role: 'Surface imaging',
-    cost: 8, mass: 25, draw: 5, scan: 48, bonus: 0,
-    gain: 'Cheap, light, low power', loss: 'Lowest science',
+    cost: 8, mass: 25, draw: 5, scan: 48,
+    gain: 'Cheap, light, low power', loss: 'Lowest base science',
   },
   radiation: {
     id: 'radiation', name: 'Radiation Sensor', role: 'Radiation environment',
-    cost: 14, mass: 45, draw: 8, scan: 52, bonus: 4,
-    gain: 'Good science + radiation bonus', loss: 'Moderate resource demand',
+    cost: 14, mass: 45, draw: 8, scan: 52,
+    gain: 'Good science; shines in storms & pits', loss: 'Moderate resource demand',
   },
   spectrometer: {
     id: 'spectrometer', name: 'Spectrometer', role: 'Composition analysis',
-    cost: 22, mass: 70, draw: 12, scan: 56, bonus: 8,
-    gain: 'Highest science + water-ice bonus', loss: 'Costly, heavy, power-hungry',
+    cost: 22, mass: 70, draw: 12, scan: 56,
+    gain: 'Highest base science', loss: 'Costly, heavy, power-hungry',
   },
+};
+
+// Protection kits (4th design slot): each one mitigates a family of hazards.
+const KITS = {
+  none: { id: 'none', name: 'No Protection', cost: 0, mass: 0, protects: [], gain: 'Saves money & mass', loss: 'No hazard mitigation' },
+  shield: { id: 'shield', name: 'Whipple Shield', cost: 5, mass: 35, protects: ['meteoroid'], gain: 'Blocks meteoroids', loss: 'Heavy: +35 kg' },
+  hardening: { id: 'hardening', name: 'Rad-Hard Avionics', cost: 6, mass: 15, protects: ['flare', 'seu'], gain: 'Storm-proof avionics', loss: 'Costly electronics' },
+  dustcover: { id: 'dustcover', name: 'Dust Covers', cost: 3, mass: 10, protects: ['dust'], gain: 'Clean optics & panels', loss: 'Only helps against dust' },
+  tank: { id: 'tank', name: 'Spare Tank', cost: 5, mass: 45, fuel: 10, protects: ['leak'], gain: '+10% fuel, leak-proof', loss: 'Heaviest kit: +45 kg' },
 };
 
 const ORBITS = {
@@ -145,16 +196,84 @@ const TRANSMISSIONS = {
   full:       { id: 'full',       name: 'Full-Resolution Transmission', mult: 1.0, desc: 'Every measurement sent at full detail.' },
 };
 
+// In-flight hazards. Slot 1 strikes during the lunar transfer, slot 2 mid-survey.
+// Which hazard appears is random, weighted by target, condition, rocket and orbit
+// (see hazardWeights); the threat forecast shows these odds before launch.
+// Options with `chance` are gambles: `fx` on success, `bad` on failure.
+const HAZARDS = {
+  meteoroid: {
+    id: 'meteoroid', name: 'Meteoroid Swarm', icon: '☄', slots: [1, 2],
+    brief: 'Tracking reports a swarm of small meteoroids on a crossing path. Impact in 90 seconds.',
+    nasa: { key: 'Atmospheric surface pressure', ds: 'moon', label: 'Lunar surface pressure', note: 'Effectively no atmosphere: meteoroids reach the Moon at full speed, which is why it is covered in craters.' },
+    options: () => [
+      { id: 'evade', name: 'Evasive burn', desc: 'Fire thrusters and dodge the swarm.', fx: { fuel: -10 } },
+      { id: 'brace', name: 'Turn the bus into the swarm', desc: 'Protect the solar panels; take hits on the body.', fx: { power: -12, risk: +10 } },
+      { id: 'hold', name: 'Hold course', desc: 'Most swarms miss. Most.', chance: 0.5, fx: {}, bad: { power: -22, risk: +15 } },
+    ],
+    kit: { id: 'kit', name: 'Face the Whipple shield forward', desc: 'The shield vaporises the particles on impact.', fx: { risk: +2 } },
+  },
+  leak: {
+    id: 'leak', name: 'Propellant Leak', icon: '⛽', slots: [1],
+    brief: 'Pressure is dropping in tank B - a stuck valve is venting propellant into space.',
+    nasa: { key: 'Escape velocity', ds: 'moon', label: 'Lunar escape velocity', note: 'To be captured, LUNA-01 must still brake below this speed on arrival - that needs propellant.' },
+    options: () => [
+      { id: 'isolate', name: 'Close the isolation valve', desc: 'Stop the leak but lose what is left in tank B.', fx: { fuel: -15 } },
+      { id: 'patch', name: 'Cycle the valve and patch software', desc: 'Save most propellant; costs power and adds risk.', fx: { power: -10, fuel: -5, risk: +6 } },
+      { id: 'ignore', name: 'Treat it as a sensor glitch', desc: 'Maybe the pressure gauge is lying.', chance: 0.4, fx: {}, bad: { fuel: -22, risk: +8 } },
+    ],
+    kit: { id: 'kit', name: 'Switch to the spare tank', desc: 'Seal tank B and feed the engine from the spare.', fx: { fuel: -3 } },
+  },
+  seu: {
+    id: 'seu', name: 'Flight Computer Upset', icon: '⚠', slots: [1, 2],
+    brief: 'A high-energy particle flipped bits in the flight computer. LUNA-01 dropped into safe mode.',
+    nasa: { key: 'Surface dose rate measured during Apollo', ds: 'moon', label: 'Radiation dose (Apollo)', note: 'No magnetic field or thick atmosphere shields the Moon - or a spacecraft near it.' },
+    options: slot => [
+      { id: 'reboot', name: 'Full reboot from backup', desc: 'Safe but slow: systems idle while restarting.', fx: slot === 2 ? { power: -10, science: -8 } : { power: -10 } },
+      { id: 'hotpatch', name: 'Hot-patch and resume', desc: 'Fast, but corrupted memory may linger.', fx: { risk: +14 } },
+    ],
+    kit: { id: 'kit', name: 'Let rad-hard avionics self-correct', desc: 'Error-correcting memory repairs the flipped bits.', fx: { power: -2 } },
+  },
+  flare: {
+    id: 'flare', name: 'Solar Particle Event', icon: '☀', slots: [1, 2],
+    brief: 'A solar flare launched a storm of energetic protons toward the Moon. Arrival in minutes.',
+    nasa: { key: 'Unshielded dose from Aug 1972 solar particle event (estimate)', ds: 'moon', label: 'Aug 1972 storm, unshielded', note: 'A potentially lethal dose for astronauts - and a serious threat to electronics.' },
+    options: slot => [
+      { id: 'safe', name: 'Instruments off until it passes', desc: slot === 2 ? 'Lose observing time.' : 'Power down everything non-essential.', fx: slot === 2 ? { science: -14 } : { power: -10 } },
+      { id: 'push', name: 'Keep operating through the storm', desc: 'Nothing lost now - electronics take the dose.', fx: { risk: +18 } },
+    ],
+    kit: { id: 'kit', name: 'Rely on rad-hard avionics', desc: 'Shielded electronics ride out the storm.', fx: { risk: +4 } },
+  },
+  dust: {
+    id: 'dust', name: 'Charged Dust Contamination', icon: '◌', slots: [2],
+    brief: 'Electrostatically charged dust lofted near the day-night line is clinging to optics and solar panels.',
+    nasa: { key: 'Dust covering that halves solar-cell output', ds: 'dust', label: 'Dust that halves solar output', note: 'Lunar dust is charged by solar radiation and clings to surfaces; Apollo 17 reported false instrument readings.' },
+    scenarioNote: 'Simplified game scenario inspired by NASA dust-hazard data.',
+    options: () => [
+      { id: 'recal', name: 'Recalibrate and heat-cycle panels', desc: 'Restore data quality at a power cost.', fx: { power: -12 } },
+      { id: 'accept', name: 'Accept degraded data', desc: 'Contaminated readings are thrown away.', fx: { science: -14 } },
+      { id: 'spin', name: 'Spin up to shed the dust', desc: 'Uses propellant and stresses the structure.', fx: { fuel: -8, risk: +5 } },
+    ],
+    kit: { id: 'kit', name: 'Close covers and vibrate panels', desc: 'Your dust covers keep optics clean.', fx: { power: -2 } },
+  },
+};
+
 // ---------------------------------------------------------------- mission condition helpers
 
 const M = {};
 
 const scenario = () => SCENARIOS[M.scenario] || SCENARIOS.solar;
+const region = () => REGIONS[M.region] || REGIONS.south_pole;
 const scienceGoal = () => scenario().goal || RULES.scienceGoal;
 const budgetCap = () => scenario().budget || RULES.startBudget;
-const instrBonus = i => i.bonus + ((scenario().bonus || {})[i.id] || 0);
+// Per-scan bonus: target region + mission condition (some conditions only apply to one region).
+function instrBonus(i) {
+  const sc = scenario();
+  const condBonus = !sc.bonusRegion || sc.bonusRegion === M.region ? ((sc.bonus || {})[i.id] || 0) : 0;
+  return (region().bonus[i.id] || 0) + condBonus;
+}
 // Risk increases are amplified by the Solar Maximum condition.
 const rk = v => (v > 0 ? Math.round(v * (scenario().riskMult || 1)) : v);
+const rkFx = fx => { const o = Object.assign({}, fx); if (o.risk) o.risk = rk(o.risk); return o; };
 
 function pickScenario(avoid) {
   const ids = Object.keys(SCENARIOS).filter(id => id !== avoid);
@@ -166,18 +285,19 @@ function pickScenario(avoid) {
 const loiFuel = mass => Math.round(mass / 10); // lunar orbit insertion burn (game model)
 
 function computeDesign(sel) {
-  const r = ROCKETS[sel.rocket], p = POWER_SYSTEMS[sel.power], i = INSTRUMENTS[sel.instrument];
-  const complete = !!(r && p && i);
-  const budgetUsed = BUS.cost + (r ? r.cost : 0) + (p ? p.cost : 0) + (i ? i.cost : 0);
-  const mass = BUS.mass + (r ? r.propellantMass : 0) + (p ? p.mass : 0) + (i ? i.mass : 0);
+  const r = ROCKETS[sel.rocket], p = POWER_SYSTEMS[sel.power], i = INSTRUMENTS[sel.instrument], k = KITS[sel.kit];
+  const complete = !!(r && p && i && k);
+  const budgetUsed = BUS.cost + (r ? r.cost : 0) + (p ? p.cost : 0) + (i ? i.cost : 0) + (k ? k.cost : 0);
+  const mass = BUS.mass + (r ? r.propellantMass : 0) + (p ? p.mass : 0) + (i ? i.mass : 0) + (k ? k.mass : 0);
+  const fuel = r ? Math.min(100, r.fuel + ((k && k.fuel) || 0)) : null;
+  const reg = region();
   return {
-    complete, budgetUsed, mass,
+    complete, budgetUsed, mass, fuel,
     capacity: r ? r.capacity : RULES.maxMass,
     power: p ? p.power - (i ? i.draw : 0) : null,
-    fuel: r ? r.fuel : null,
-    arrivalFuel: r ? r.fuel - loiFuel(mass) : null,
+    arrivalFuel: r ? fuel - loiFuel(mass) : null,
     comm: BUS.comm + (r ? r.comm : 0) + (p ? p.comm : 0),
-    sciencePotential: i ? i.scan + instrBonus(i) : null,
+    sciencePotential: i ? Math.round(i.scan * reg.sci) + instrBonus(i) : null,
     risk: rk((r ? r.risk : 0) + (p ? p.risk : 0)),
   };
 }
@@ -190,7 +310,7 @@ function validateDesign(sel) {
     {
       id: 'budget', label: 'Budget', ok: d.budgetUsed <= cap,
       value: `$${d.budgetUsed}M of $${cap}M`,
-      fix: `Over budget by $${d.budgetUsed - cap}M. Choose a cheaper rocket, power system or instrument.`,
+      fix: `Over budget by $${d.budgetUsed - cap}M. Choose a cheaper rocket, power system, instrument or kit.`,
     },
     {
       id: 'mass', label: 'Mass', ok: d.mass <= d.capacity,
@@ -205,10 +325,55 @@ function validateDesign(sel) {
     {
       id: 'mission', label: 'Mission (fuel to reach orbit)', ok: d.arrivalFuel >= RULES.minArrivalFuel,
       value: `${d.fuel}% → ${d.arrivalFuel}% after lunar arrival (minimum ${RULES.minArrivalFuel}%)`,
-      fix: 'Not enough propellant to brake into lunar orbit. Carry more fuel (bigger rocket) or reduce mass.',
+      fix: 'Not enough propellant to brake into lunar orbit. Carry more fuel (bigger rocket, spare tank) or reduce mass.',
     },
   ];
   return { design: d, checks, ok: checks.every(c => c.ok) };
+}
+
+// ---------------------------------------------------------------- hazard odds
+
+// Relative weight of each hazard for a slot. ctx: { rocket, orbit } (defaults from mission state).
+function hazardWeights(slot, ctx = {}) {
+  const solar = M.scenario === 'solar';
+  const rocket = ctx.rocket || M.selectedRocket || 'medium';
+  const low = (ctx.orbit || M.selectedOrbit) === 'low';
+  if (slot === 1) {
+    return {
+      meteoroid: 1.0,
+      leak: { light: 1.4, medium: 0.9, heavy: 0.6 }[rocket],
+      seu: solar ? 1.1 : 0.6,
+      flare: solar ? 1.6 : 0.3,
+    };
+  }
+  return {
+    meteoroid: low ? 0.8 : 0.5,
+    dust: region().dust * (low ? 1.0 : 0.3),
+    seu: solar ? 0.9 : 0.5,
+    flare: solar ? 1.8 : 0.3,
+  };
+}
+
+function drawHazard(slot, exclude, roll = Math.random()) {
+  const w = hazardWeights(slot);
+  if (exclude) delete w[exclude];
+  const total = Object.values(w).reduce((a, b) => a + b, 0);
+  let acc = 0;
+  for (const [id, v] of Object.entries(w)) { acc += v / total; if (roll < acc) return id; }
+  return Object.keys(w).pop();
+}
+
+// Chance that each hazard strikes at least once, for the pre-launch threat forecast.
+// Dust is evaluated for a LOW orbit (worst case) and flagged as such.
+function threatForecast(rocket) {
+  const p = (slot, orbit) => { const w = hazardWeights(slot, { rocket, orbit }); const t = Object.values(w).reduce((a, b) => a + b, 0); return id => (w[id] || 0) / t; };
+  const p1 = p(1, 'high'), p2low = p(2, 'low'), p2high = p(2, 'high');
+  const lvl = x => (x >= 0.4 ? 'HIGH' : x >= 0.2 ? 'MODERATE' : 'LOW');
+  return Object.values(HAZARDS).map(h => {
+    const both = orbit => 1 - (1 - p1(h.id)) * (1 - (orbit === 'low' ? p2low : p2high)(h.id));
+    const worst = Math.max(both('low'), both('high'));
+    return { id: h.id, name: h.name, p: worst, level: lvl(worst), lowOnly: h.id === 'dust' || h.id === 'meteoroid' ? both('low') - both('high') > 0.08 : false, kit: Object.values(KITS).find(k => k.protects.includes(h.id)) };
+  });
 }
 
 // ---------------------------------------------------------------- mission state
@@ -218,12 +383,14 @@ function resetMission(scenarioId) {
   Object.assign(M, {
     missionStage: 'TITLE', checkpoint: 0,
     scenario: scenarioId || pickScenario(prev),
+    region: null,
     budget: RULES.startBudget, budgetUsed: 0, mass: 0,
     power: 100, fuel: 100, science: 0, communication: 0, risk: 0,
-    selectedRocket: null, selectedPowerSystem: null, selectedInstrument: null,
+    selectedRocket: null, selectedPowerSystem: null, selectedInstrument: null, selectedKit: null,
     selectedOrbit: null, selectedObservation: null, selectedEventResponse: null, selectedTransmission: null,
     missionStatus: null, reasons: [], objectives: [],
-    collectedScience: 0, transmittedFraction: 1,
+    collectedScience: 0, transmittedFraction: 1, scanAdjust: 0,
+    hazards: [],
     failure: null, flags: {}, log: [],
   });
   M.budget = budgetCap();
@@ -281,23 +448,25 @@ function checkThresholds(stage) {
   return [];
 }
 
-// ---- Checkpoint 1: commit the validated design
+// ---- Checkpoint 1: target + validated design
 function commitDesign(sel) {
   const d = computeDesign(sel);
-  const r = ROCKETS[sel.rocket], p = POWER_SYSTEMS[sel.power], i = INSTRUMENTS[sel.instrument];
+  const r = ROCKETS[sel.rocket], p = POWER_SYSTEMS[sel.power], i = INSTRUMENTS[sel.instrument], k = KITS[sel.kit];
   Object.assign(M, {
-    selectedRocket: r.id, selectedPowerSystem: p.id, selectedInstrument: i.id,
+    selectedRocket: r.id, selectedPowerSystem: p.id, selectedInstrument: i.id, selectedKit: k.id,
     budgetUsed: d.budgetUsed, budget: budgetCap() - d.budgetUsed, mass: d.mass,
     power: d.power, fuel: d.fuel, communication: d.comm, risk: d.risk, science: 0,
   });
-  const b = instrBonus(i);
+  const reg = region(), b = instrBonus(i);
+  addLog('Target', reg.name, [note(reg.short), note(`Science ×${reg.sci}`)], reg.pitch);
   addLog('Design', r.name, [chip('budgetCost', r.cost), note(`Fuel ${r.fuel}%`), note(`Payload ≤ ${r.capacity} kg`), note(`Comm +${r.comm}`)]
     .concat(r.risk ? [chip('risk', rk(r.risk))] : []), `${r.antenna}. ${r.gain}; ${r.loss.toLowerCase()}.`);
   addLog('Design', p.name, [chip('budgetCost', p.cost), chip('mass', p.mass), note(`Power ${p.power}%`)]
     .concat(p.comm ? [note(`Comm +${p.comm}`)] : []).concat(p.risk ? [chip('risk', rk(p.risk))] : []),
     p.battery ? 'Battery absorbs most of the lunar-night power drain.' : p.gain + '.');
-  addLog('Design', i.name, [chip('budgetCost', i.cost), chip('mass', i.mass), chip('power', -i.draw), note(`Scan science ${i.scan}${b ? ' + ' + b + ' target bonus' : ''}`)],
+  addLog('Design', i.name, [chip('budgetCost', i.cost), chip('mass', i.mass), chip('power', -i.draw), note(`Scan science ${i.scan}${b ? (b > 0 ? ' + ' : ' − ') + Math.abs(b) + ' target bonus' : ''}`)],
     i.role + '.');
+  if (k.id !== 'none') addLog('Design', k.name, [chip('budgetCost', k.cost), chip('mass', k.mass)].concat(k.fuel ? [note(`Fuel +${k.fuel}%`)] : []), k.gain + '.');
 }
 
 // ---- Checkpoint 2: arrival + orbit
@@ -307,12 +476,17 @@ function arrive() {
     `Braking burn scales with spacecraft mass (${M.mass} kg ÷ 10) - game model.`);
 }
 
-function orbitFx(id) { const f = Object.assign({}, ORBITS[id].fx); f.risk = rk(f.risk); return f; }
-function orbitAllowed(id) { return M.fuel + ORBITS[id].fx.fuel >= 0; }
+function orbitFx(id) {
+  const f = rkFx(ORBITS[id].fx);
+  f.fuel -= region().fuel;           // plane change to pass over the chosen target
+  return f;
+}
+function orbitAllowed(id) { return M.fuel + orbitFx(id).fuel >= 0; }
 
 function chooseOrbit(id) {
   M.selectedOrbit = id;
-  const chips = applyFx('Orbit', ORBITS[id].name, orbitFx(id), ORBITS[id].desc);
+  const pc = region().fuel;
+  const chips = applyFx('Orbit', ORBITS[id].name, orbitFx(id), ORBITS[id].desc + (pc ? ` Includes ${pc}% fuel to align the orbit over ${region().short.toLowerCase()}.` : ''));
   if (M.fuel < RULES.lowFuel && !M.flags.lowFuel) {
     M.flags.lowFuel = true;
     const r = rk(15);
@@ -323,26 +497,59 @@ function chooseOrbit(id) {
   return chips;
 }
 
+// ---- Hazards
+function hazardOptions(id, slot) {
+  const h = HAZARDS[id];
+  const opts = h.options(slot).map(o => Object.assign({}, o, { fx: rkFx(o.fx), bad: o.bad ? rkFx(o.bad) : null }));
+  const kit = KITS[M.selectedKit];
+  if (kit && kit.protects.includes(id)) opts.unshift(Object.assign({}, h.kit, { fx: rkFx(h.kit.fx), isKit: true }));
+  return opts;
+}
+
+// Resolve a hazard response. Science losses during the survey reduce the scan result.
+function resolveHazard(id, optId, slot, roll = Math.random()) {
+  const h = HAZARDS[id], o = hazardOptions(id, slot).find(x => x.id === optId);
+  let fx = o.fx, outcome = null;
+  if (o.chance != null) {
+    const lucky = roll < o.chance;
+    fx = lucky ? o.fx : o.bad;
+    outcome = lucky ? 'lucky' : 'unlucky';
+  }
+  fx = Object.assign({}, fx);
+  let sciNote = [];
+  if (fx.science && slot === 2) { M.scanAdjust += fx.science; sciNote = [chip('science', fx.science)]; delete fx.science; }
+  M.hazards.push({ slot, id, opt: optId, outcome });
+  const title = `${h.name}: ${o.name}${outcome ? (outcome === 'lucky' ? ' - lucky miss' : ' - it hit') : ''}`;
+  const idx = M.log.length;
+  const chips = sciNote.concat(applyFx('Hazard', title, fx, outcome === 'lucky' ? 'The gamble paid off - no damage.' : o.desc));
+  const logged = sciNote.concat(M.log[idx].chips);
+  M.log[idx].chips = logged.length ? logged : [note('No damage')];
+  if (!chips.length) chips.push(note('No damage'));
+  return { chips, outcome };
+}
+
 // ---- Checkpoint 3: survey
 function scanFx(id) {
-  const s = SCANS[id], i = INSTRUMENTS[M.selectedInstrument];
-  const base = Math.round(i.scan * s.mult), bonus = instrBonus(i);
-  return { science: base + bonus, power: s.power, risk: rk(s.risk), _base: base, _bonus: bonus };
+  const s = SCANS[id], i = INSTRUMENTS[M.selectedInstrument], reg = region();
+  const base = Math.round(i.scan * s.mult * reg.sci), bonus = instrBonus(i);
+  return { science: Math.max(0, base + bonus), power: s.power, risk: rk(s.risk), _base: base, _bonus: bonus };
 }
 
 function runScan(id) {
   M.selectedObservation = id;
   const fx = scanFx(id);
   const i = INSTRUMENTS[M.selectedInstrument];
-  return applyFx('Survey', SCANS[id].name, { science: fx.science, power: fx.power, risk: fx.risk },
-    `${i.name} ${fx._base}${fx._bonus ? ` + ${fx._bonus} target bonus` : ''} science.`);
+  const adj = M.scanAdjust;
+  const sci = Math.max(0, fx.science + adj);
+  return applyFx('Survey', SCANS[id].name, { science: sci, power: fx.power, risk: fx.risk },
+    `${i.name} ${fx._base}${fx._bonus ? ` ${fx._bonus > 0 ? '+' : '−'} ${Math.abs(fx._bonus)} target bonus` : ''}${adj ? ` − ${-adj} lost to hazard` : ''} science.`);
 }
 
 // ---- Mission event
 const hasBattery = () => POWER_SYSTEMS[M.selectedPowerSystem].battery;
 function eventDrain() {
-  const sc = scenario();
-  return hasBattery() ? (sc.batteryDrain || EVENT.batteryDrain) : (sc.drain || EVENT.drain);
+  const base = hasBattery() ? EVENT.batteryDrain : EVENT.drain;
+  return Math.round(base * region().drain * (scenario().drainMult || 1));
 }
 function applyEventDrain() {
   return applyFx('Event', 'Lunar night heater load', { power: -eventDrain() },
@@ -364,11 +571,14 @@ function chooseEvent(id) {
 
 // ---- Checkpoint 4: transmission
 function txCost(id, comm = M.communication) {
-  return id === 'full' ? 10 + Math.round((100 - comm) / 3) : 4 + Math.round((100 - comm) / 6);
+  const base = id === 'full' ? 10 + (100 - comm) / 3 : 4 + (100 - comm) / 6;
+  return Math.round(base * region().tx);
 }
 function txFx(id) {
   const lost = Math.round(M.science * TRANSMISSIONS[id].mult) - M.science;
-  return { science: lost, power: -txCost(id), risk: id === 'full' && M.communication < 65 ? rk(12) : 0 };
+  const weak = id === 'full' && M.communication < 65 ? 12 : 0;
+  const risk = weak + region().txRisk;
+  return { science: lost, power: -txCost(id), risk: risk ? rk(risk) : 0 };
 }
 const commLabel = c => (c >= 75 ? 'STRONG' : c >= 60 ? 'MODERATE' : 'WEAK');
 
@@ -385,8 +595,9 @@ function transmit(id) {
     fx.science = received - M.science;
     fx.power = -M.power;
   }
+  const far = region().side === 'far' ? ' Far side: data stored and relayed when LUNA-01 rounds the limb.' : '';
   chips.push(...applyFx('Transmission', TRANSMISSIONS[id].name, fx,
-    `Comm capability ${M.communication} (${commLabel(M.communication)}): link cost ${cost}% power.`));
+    `Comm capability ${M.communication} (${commLabel(M.communication)}): link cost ${cost}% power.${far}`));
 
   if (!M.failure && M.risk >= RULES.riskHigh && M.risk < RULES.riskCritical) {
     const loss = Math.round(M.science * RULES.anomalyLoss);
@@ -399,7 +610,7 @@ function transmit(id) {
   return chips;
 }
 
-// ---- Evaluation (deterministic: depends only on mission state)
+// ---- Evaluation (deterministic given the mission state)
 // SUCCESS needs all three objectives; PARTIAL means data returned but an objective was missed.
 function objectives() {
   const goal = scienceGoal();
@@ -430,6 +641,10 @@ function evaluate() {
     reasons.push(`Data returned, but ${obj.filter(o => !o.ok).length} of 3 objectives missed.`);
   }
   if (status !== 'FAILURE') for (const o of obj) if (!o.ok) reasons.push(`Missed: ${o.label} - you ended with ${o.value}.`);
+  for (const hz of M.hazards) {
+    const h = HAZARDS[hz.id];
+    reasons.push(`${h.name}: ${hz.opt === 'kit' ? `your ${KITS[M.selectedKit].name} handled it` : hz.outcome === 'unlucky' ? 'the gamble failed' : hz.outcome === 'lucky' ? 'the gamble paid off' : 'handled at a cost'}.`);
+  }
   if (M.flags.anomaly) reasons.push(`High risk cost ${M.flags.anomaly} science in a transmission anomaly.`);
   if (M.selectedTransmission === 'compressed' && status !== 'FAILURE') reasons.push('Compression saved power but discarded 25% of the data detail.');
   if (M.flags.lowFuel) reasons.push('A thin propellant margin raised mission risk.');
@@ -450,6 +665,6 @@ function strategyLabel() {
   if (M.selectedTransmission === 'full') bold++; else if (M.selectedTransmission) careful++;
   if (bold >= 3) return { name: 'SCIENCE-FOCUSED', next: 'Try a safety-focused run: higher orbit, Standard Scan and protect your margins.' };
   if (careful >= 3) return { name: 'SAFETY-FOCUSED', next: 'Try an efficiency-focused run: a Light rocket and a design under $65M.' };
-  if (M.budgetUsed <= 65) return { name: 'EFFICIENCY-FOCUSED', next: 'Try a science-focused run: Spectrometer, low orbit and Deep Scan.' };
-  return { name: 'BALANCED', next: 'Try pushing one direction harder: maximum science, or minimum cost.' };
+  if (M.budgetUsed <= 65) return { name: 'EFFICIENCY-FOCUSED', next: 'Try a science-focused run: the target\'s best instrument, low orbit and Deep Scan.' };
+  return { name: 'BALANCED', next: 'Try another target: each region rewards a different instrument.' };
 }

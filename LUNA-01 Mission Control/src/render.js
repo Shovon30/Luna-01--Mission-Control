@@ -129,32 +129,74 @@ const Draw = (() => {
   const LIGHT = (() => { const v = [-0.55, -0.42, 0.72], l = Math.hypot(...v); return v.map(c => c / l); })();
 
   // ================================================================ MOON
-  const MT = 720;
-  let moonTex = null;
-  const TARGET = { u: 0.14, v: 0.74 }; // south polar survey target, in moon-radius units from centre
+  // Textures are generated on a real latitude/longitude grid: the major maria and named
+  // craters sit at their (approximate) real positions, so the Apollo landing sites from the
+  // regions CSV land on the right terrain. Two views: the nearside (lon 0, what Earth sees)
+  // and the farside (lon 180). Both are tilted so the south polar region is visible.
+  const MT = 640, D2R = Math.PI / 180, TILT = 15 * D2R;
+  const VIEWS = { near: 0, far: 180 };
+  const moonTex = { near: null, far: null };
 
-  function buildMoon() {
-    const R = MT / 2, N = MT * MT, rnd = mulberry32(42), fbm = makeNoise(5);
+  // Maria [lat, lon, radius deg, strength] - a visual approximation of the real map.
+  const MARIA = [
+    [32.8, -15.6, 17], [28, 17.5, 10], [8.5, 31.4, 11], [17, 59.1, 8], [-7.8, 51.3, 9], [-15.2, 35.5, 5.5],
+    [18, -57, 17], [5, -48, 14], [-5, -30, 10], [-21.3, -16.6, 10], [-24.4, -38.6, 6], [-10, -22, 6],
+    [56, -20, 5], [56, 5, 5], [56, 28, 4], [13.3, 3.6, 4], [2, -2, 4], [-1, 12, 4], [21, -30, 6], [40, -45, 7],
+    [27.3, 147.9, 3.5], [-19.4, -92.8, 3.5], [-53, -169, 16, 0.3],
+  ];
+  // Named craters [lat, lon, radius deg (exaggerated for visibility), rays]
+  const NAMED_CRATERS = [
+    [-43.3, -11.4, 2.4, true], [9.6, -20.1, 2.6, true], [8.1, -38, 1.3, true], [-58.4, -14.4, 3.6, false],
+    [51.6, -9.3, 2.0, false], [-11.4, -1.4, 2.0, false], [-13.2, 3.0, 1.7, false], [-84.9, -35.5, 3.2, false],
+    [30, 160, 3, false], [-10, 150, 4, false], [15, 175, 3.4, false], [-35, 140, 3, true], [45, -160, 3.5, false],
+  ];
+
+  function viewVec(lat, lon, lon0) {       // body lat/lon -> view space (x right, y up, z towards viewer)
+    const la = lat * D2R, lo = (lon - lon0) * D2R;
+    const xb = Math.cos(la) * Math.sin(lo), yb = Math.sin(la), zb = Math.cos(la) * Math.cos(lo);
+    return { x: xb, y: yb * Math.cos(TILT) + zb * Math.sin(TILT), z: zb * Math.cos(TILT) - yb * Math.sin(TILT) };
+  }
+  // Screen offset in moon radii (y down) for a latitude/longitude in a given view.
+  function project(lat, lon, view = 'near') {
+    const v = viewVec(lat, lon, VIEWS[view]);
+    return { x: v.x, y: -v.y, z: v.z, visible: v.z > 0 };
+  }
+
+  function buildMoon(view) {
+    const lon0 = VIEWS[view];
+    const R = MT / 2, N = MT * MT, rnd = mulberry32(view === 'near' ? 42 : 77), fbm = makeNoise(5);
     const hgt = new Float32Array(N), alb = new Float32Array(N), inside = new Uint8Array(N);
-    // 1. albedo: bright highlands, dark maria (mostly northern / near side), fine regolith noise
+    const mariaV = MARIA.map(([la, lo, r, s]) => { const c = Math.cos(la * D2R); return [c * Math.sin(lo * D2R), Math.sin(la * D2R), c * Math.cos(lo * D2R), r, s || 1]; });
+    const ct = Math.cos(TILT), st = Math.sin(TILT), cl = Math.cos(lon0 * D2R), sl = Math.sin(lon0 * D2R);
+    // 1. albedo (maria vs highlands) and small-scale relief, sampled on the body sphere
     for (let py = 0; py < MT; py++) for (let px = 0; px < MT; px++) {
       const nx = (px + 0.5 - R) / R, ny = (py + 0.5 - R) / R, d2 = nx * nx + ny * ny;
       if (d2 > 1.0) continue;
       const i = py * MT + px, nz = Math.sqrt(1 - d2);
       inside[i] = 1;
-      const mare = fbm(nx * 1.7 + 3, ny * 1.7 + 1, nz * 1.7, 4) * (1 - 0.55 * Math.max(0, ny + 0.1));
-      const fine = fbm(nx * 14, ny * 14, nz * 14, 3);
-      alb[i] = lerp(0.64, 0.3, smooth(0.47, 0.58, mare)) + (fine - 0.5) * 0.1;
-      hgt[i] = (fbm(nx * 7 + 9, ny * 7, nz * 7, 4) - 0.5) * 6;
+      const yv = -ny, yb = yv * ct - nz * st, zb0 = nz * ct + yv * st;
+      const bx = nx * cl + zb0 * sl, bz = -nx * sl + zb0 * cl;
+      const pert = fbm(bx * 3 + 7, yb * 3, bz * 3, 3);
+      let m = 0;
+      for (const [mx, my, mz, r, s] of mariaV) {
+        const cosd = bx * mx + yb * my + bz * mz;
+        if (cosd < 0.85) continue;
+        const dd = Math.acos(Math.min(1, cosd)) / D2R, rr = r * (0.75 + 0.5 * pert);
+        m = Math.max(m, s * smooth(rr + 2.5, rr - 2.5, dd));
+      }
+      const fine = fbm(bx * 14, yb * 14, bz * 14, 3), mid = fbm(bx * 4 + 2, yb * 4, bz * 4, 3);
+      alb[i] = lerp(0.64, 0.3, m) + (fine - 0.5) * 0.1 + (mid - 0.5) * 0.08;
+      hgt[i] = (fbm(bx * 7 + 9, yb * 7, bz * 7, 4) - 0.5) * 6 * (1 - 0.6 * m);
     }
     // 2. craters stamped into the height map, foreshortened towards the limb
-    function crater(cx, cy, rad, depth, fresh) {
+    function crater(cx, cy, rad, depth, fresh, rays) {
       const nx = (cx - R) / R, ny = (cy - R) / R, d = Math.hypot(nx, ny);
       const nz = Math.sqrt(Math.max(0.02, 1 - d * d));
       const ux = d > 1e-4 ? nx / d : 1, uy = d > 1e-4 ? ny / d : 0;
-      const ext = rad * (fresh ? 3 : 1.6);
+      const ext = rad * (rays ? 7 : fresh ? 3 : 1.6);
       const x0 = Math.max(0, Math.floor(cx - ext)), x1 = Math.min(MT - 1, Math.ceil(cx + ext));
       const y0 = Math.max(0, Math.floor(cy - ext)), y1 = Math.min(MT - 1, Math.ceil(cy + ext));
+      const ph = rnd() * TAU;
       for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
         const i = y * MT + x;
         if (!inside[i]) continue;
@@ -164,16 +206,29 @@ const Draw = (() => {
         if (q < 1) hgt[i] += depth * (q * q * 1.25 - 1);
         else if (q < 1.6) hgt[i] += depth * 0.25 * Math.exp(-Math.pow((q - 1) / 0.22, 2));
         if (fresh && q < 3) alb[i] += 0.1 * Math.exp(-q * 1.2) * (q > 0.9 ? 1 : 0.4);
+        if (rays && q > 1 && q < 7) {
+          const a = Math.atan2(dt, dr);
+          alb[i] += 0.13 * Math.pow(Math.max(0, Math.cos(a * 7 + ph) * Math.cos(a * 3 - ph)), 6) * Math.exp(-(q - 1) / 2.5);
+        }
       }
     }
-    for (let k = 0; k < 700; k++) {
-      const rad = 1.4 + Math.pow(rnd(), 8) * 70;
+    const nCraters = view === 'near' ? 600 : 950;
+    for (let k = 0; k < nCraters; k++) {
+      const rad = 1.3 + Math.pow(rnd(), 8) * 62;
       const a = rnd() * TAU, rr = Math.sqrt(rnd()) * (R - rad * 0.3);
-      crater(R + Math.cos(a) * rr, R + Math.sin(a) * rr, rad, rad * 0.2, rnd() < 0.1);
+      const cx = R + Math.cos(a) * rr, cy = R + Math.sin(a) * rr;
+      const i = Math.floor(cy) * MT + Math.floor(cx);
+      if (rad > 5 && alb[i] < 0.45 && rnd() < 0.75) continue;       // maria are younger: fewer big craters
+      crater(cx, cy, rad, rad * 0.2, rnd() < 0.1, false);
     }
-    crater(R * 0.86, R * 1.42, 13, 5, true);                       // young ray crater
-    const tx = R + TARGET.u * R, ty = R + TARGET.v * R;
-    crater(tx, ty, R * 0.095, R * 0.03, false);                     // survey target (Cabeus-like)
+    const shadows = [];
+    for (const [la, lo, rd, rays] of NAMED_CRATERS) {
+      const p = project(la, lo, view);
+      if (p.z < 0.08) continue;
+      const rad = rd * D2R * R;
+      crater(R + p.x * R, R + p.y * R, rad, rad * 0.22, rays, rays);
+      if (la < -80) shadows.push([R + p.x * R, R + p.y * R, rad * 0.75]);   // permanently shadowed polar floor
+    }
     // 3. shading from height-map normals + sphere normal
     const img = new ImageData(MT, MT), px4 = img.data;
     const [lx, ly, lz] = LIGHT;
@@ -186,21 +241,20 @@ const Draw = (() => {
       const l = Math.hypot(sx, sy, sz); sx /= l; sy /= l; sz /= l;
       const lam = Math.max(0, sx * lx + sy * ly + sz * lz);
       let b = clamp(alb[i]) * (0.05 + 1.1 * Math.pow(lam, 0.85));
-      // permanently shadowed floor of the target crater
-      if (Math.hypot(px - tx, py - ty) < R * 0.07) b *= 0.35;
+      for (const [sx0, sy0, sr] of shadows) if (Math.hypot(px - sx0, py - sy0) < sr) b *= 0.3;
       const edge = clamp((1 - dist) * R * 1.2);
       const o = i * 4;
       px4[o] = Math.min(255, b * 238); px4[o + 1] = Math.min(255, b * 232); px4[o + 2] = Math.min(255, b * 224); px4[o + 3] = edge * 255;
     }
     const c = makeCanvas(MT, MT);
     c.getContext('2d').putImageData(img, 0, 0);
-    moonTex = c;
+    moonTex[view] = c;
   }
 
-  // night: 0 (lit as rendered) .. 1 (mostly dark)
+  // night: 0 (lit as rendered) .. 1 (mostly dark). view: 'near' | 'far'
   function moon(ctx, x, y, r, o = {}) {
     glow(ctx, x, y, r * 1.18, 'rgba(200,210,230,ALPHA)', 0.06);
-    ctx.drawImage(moonTex, x - r, y - r, r * 2, r * 2);
+    ctx.drawImage(moonTex[o.view || 'near'] || moonTex.near, x - r, y - r, r * 2, r * 2);
     if (o.night > 0) {
       ctx.save();
       ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.clip();
@@ -213,7 +267,16 @@ const Draw = (() => {
       ctx.restore();
     }
   }
-  const targetPos = (x, y, r) => ({ x: x + TARGET.u * r, y: y + TARGET.v * r });
+
+  // Current survey target (region lat/lon) in a given view; falls back to the limb for hidden sites.
+  const regionView = reg => (reg.side === 'far' ? 'far' : 'near');
+  function regionOffset(reg, view) {
+    const p = project(reg.lat, reg.lon, view || regionView(reg));
+    if (p.visible) return p;
+    const d = Math.hypot(p.x, p.y) || 1;                 // behind the limb: pin to the edge
+    return { x: p.x / d * 0.97, y: p.y / d * 0.97, z: 0, visible: false };
+  }
+  const targetPos = (x, y, r, view) => { const p = regionOffset(region(), view); return { x: x + p.x * r, y: y + p.y * r, visible: p.visible }; };
 
   function targetMarker(ctx, x, y, t, color = COL.amber, size = 1) {
     ctx.save();
@@ -372,6 +435,24 @@ const Draw = (() => {
       ctx.fillStyle = '#20252c'; ctx.beginPath(); ctx.arc(16, 31, 1.3, 0, TAU); ctx.fill();
     }
 
+    // protection kit hardware
+    const kit = cfg.kit;
+    if (kit === 'shield') {                  // Whipple bumper plate ahead of the bus
+      ctx.fillStyle = '#8d949e'; ctx.fillRect(-24, -17, 3, 34);
+      ctx.strokeStyle = '#5b626c'; ctx.lineWidth = 0.6; ctx.strokeRect(-24, -17, 3, 34);
+      ctx.strokeStyle = '#a8b0bc'; ctx.beginPath(); ctx.moveTo(-21, -12); ctx.lineTo(-16, -12); ctx.moveTo(-21, 12); ctx.lineTo(-16, 12); ctx.stroke();
+    } else if (kit === 'tank') {             // spare spherical propellant tank
+      const tg = ctx.createRadialGradient(11, 20, 1, 13, 22, 7);
+      tg.addColorStop(0, '#e7eaee'); tg.addColorStop(1, '#6f7680');
+      ctx.fillStyle = tg; ctx.beginPath(); ctx.arc(-6, 21, 6, 0, TAU); ctx.fill();
+    } else if (kit === 'hardening') {        // shielded avionics vault
+      ctx.fillStyle = '#3b4250'; ctx.fillRect(-10, -15, 12, 6);
+      ctx.strokeStyle = '#9aa3b0'; ctx.lineWidth = 0.6; ctx.strokeRect(-10, -15, 12, 6);
+    } else if (kit === 'dustcover') {        // hinged covers over the optics
+      ctx.strokeStyle = '#c9ced6'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(-1, 15); ctx.lineTo(-4, 26); ctx.moveTo(15, 15); ctx.lineTo(18, 26); ctx.stroke();
+    }
+
     // thruster nozzle + nav lights
     ctx.fillStyle = '#4f5663';
     ctx.beginPath(); ctx.moveTo(-16, -4); ctx.lineTo(-22, -6); ctx.lineTo(-22, 6); ctx.lineTo(-16, 4); ctx.closePath(); ctx.fill();
@@ -397,6 +478,7 @@ const Draw = (() => {
       power: M.selectedPowerSystem || sel.power || 'basic',
       instrument: M.selectedInstrument || sel.instrument || 'camera',
       antenna: r ? r.antennaSize : 10,
+      kit: M.selectedKit || sel.kit,
     };
   };
 
@@ -540,6 +622,107 @@ const Draw = (() => {
     text(ctx, str, x, y, { size: 10.5, color, spacing: 1.5, align });
   }
 
+  // ================================================================ HAZARD VISUALS
+  // Progress clocks pause while a hazard is being handled.
+  function progressT(phase) {
+    if (Game.phase === phase) return Game.phaseT;
+    if (Game.hazard && Game.hazard.resume && Game.hazard.resume.phase === phase) return Game.hazard.resume.phaseT;
+    return 0;
+  }
+  const evading = () => !!(Game.hazard && Game.hazard.opt === 'evade' && Game.t - Game.hazard.tDone < 1.6);
+  const ROCKS = (() => { const r = mulberry32(3), out = []; for (let k = 0; k < 7; k++) out.push({ off: r(), spread: (r() - 0.5) * 0.5, size: 3 + r() * 5, spin: (r() - 0.5) * 4, pts: Array.from({ length: 7 }, () => 0.7 + r() * 0.5) }); return out; })();
+  let lastCraft = { x: 400, y: 360 };
+
+  function rock(ctx, x, y, s, rot, pts) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+    const g = ctx.createLinearGradient(-s, -s, s, s);
+    g.addColorStop(0, '#9a9086'); g.addColorStop(1, '#3f3a35');
+    ctx.fillStyle = g; ctx.beginPath();
+    pts.forEach((k, i) => { const a = i / pts.length * TAU; ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * s * k, Math.sin(a) * s * k); });
+    ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+
+  function hazardFx(ctx, t, cx, cy, bannerY = 186) {
+    lastCraft = { x: cx, y: cy };
+    const hz = Game.hazard;
+    if (!hz) return;
+    const since = t - hz.t0, active = !hz.done, after = hz.done ? t - hz.tDone : 0;
+    const fade = active ? 1 : clamp(1 - after / 2.2);
+    if (fade <= 0) return;
+    ctx.save();
+    if (hz.id === 'meteoroid') {
+      const miss = hz.done && (hz.opt === 'evade' || hz.opt === 'kit' || hz.outcome === 'lucky');
+      for (const r of ROCKS) {
+        const dir = -0.55 + r.spread;
+        const travel = active ? ((since * 0.18 + r.off) % 1) : 1 + after * 0.6;
+        const dist = active ? lerp(520, 70, travel) : miss ? -after * 400 - r.off * 60 : 60 - after * 300;
+        const x = cx + Math.cos(dir) * dist + (miss ? 60 + r.off * 40 : 0), y = cy + Math.sin(dir) * dist;
+        ctx.globalAlpha = fade;
+        const tg = ctx.createLinearGradient(x, y, x + Math.cos(dir) * 60, y + Math.sin(dir) * 60);
+        tg.addColorStop(0, 'rgba(255,200,150,0.5)'); tg.addColorStop(1, 'rgba(255,200,150,0)');
+        ctx.strokeStyle = tg; ctx.lineWidth = r.size * 0.8;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(dir) * 60, y + Math.sin(dir) * 60); ctx.stroke();
+        rock(ctx, x, y, r.size, t * r.spin, r.pts);
+      }
+      if (active) {
+        ctx.globalAlpha = 0.6 + 0.4 * Math.abs(Math.sin(t * 6));
+        ctx.strokeStyle = COL.red; ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(-0.55) * 420, cy + Math.sin(-0.55) * 420); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.strokeRect(cx - 34, cy - 34, 68, 68);
+        text(ctx, `IMPACT T−${Math.max(0, 90 - Math.floor(since * 4))} s`, cx - 34, cy - 44, { size: 10, color: COL.red, spacing: 1.5, weight: 700 });
+      }
+    } else if (hz.id === 'leak') {
+      const n = active ? 3 : hz.outcome === 'unlucky' ? 4 : 0;
+      for (let k = 0; k < n * fade; k++) emit({ x: cx + 18, y: cy + 6, vx: 120 + Math.random() * 90, vy: 30 + (Math.random() - 0.5) * 70, life: 1.1, max: 1.1, size: 2, grow: 7, drag: 0.97, add: false, soft: true, alpha: 0.6, color: '220,235,245' });
+      if (active) text(ctx, 'TANK B PRESSURE ↓', cx + 30, cy - 30, { size: 10, color: COL.amber, spacing: 1.5, weight: 700, alpha: 0.6 + 0.4 * Math.abs(Math.sin(t * 5)) });
+    } else if (hz.id === 'seu') {
+      ctx.globalAlpha = fade;
+      for (let k = 0; k < 5; k++) { ctx.fillStyle = `rgba(229,83,75,${Math.random() * 0.12})`; ctx.fillRect(0, Math.random() * H, 800, 1 + Math.random() * 4); }
+      if (active) {
+        ctx.fillStyle = `rgba(229,83,75,${0.25 + 0.25 * Math.abs(Math.sin(t * 8))})`;
+        ctx.beginPath(); ctx.arc(cx, cy, 30, 0, TAU); ctx.fill();
+        text(ctx, 'SAFE MODE', cx, cy - 40, { size: 11, color: COL.red, spacing: 3, weight: 700, align: 'center' });
+      }
+    } else if (hz.id === 'flare') {
+      const flick = 0.85 + 0.15 * Math.sin(t * 13);
+      const g = ctx.createRadialGradient(-40, 60, 10, -40, 60, 820);
+      g.addColorStop(0, `rgba(255,236,200,${0.75 * fade * flick})`); g.addColorStop(0.18, `rgba(255,190,110,${0.3 * fade})`); g.addColorStop(0.6, `rgba(255,150,80,${0.08 * fade})`); g.addColorStop(1, 'rgba(255,150,80,0)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 800, H);
+      ctx.strokeStyle = `rgba(255,220,170,${0.25 * fade})`; ctx.lineWidth = 1;   // proton streaks
+      for (let k = 0; k < 40 * fade; k++) {
+        const x = Math.random() * 800, y = 90 + Math.random() * (H - 90);
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 14, y + 7); ctx.stroke();
+      }
+      ctx.fillStyle = `rgba(255,245,230,${0.9 * fade})`;
+      for (let k = 0; k < 50 * fade; k++) ctx.fillRect(Math.random() * 800, 90 + Math.random() * (H - 90), 1.6, 1.6);
+    } else if (hz.id === 'dust') {
+      for (let k = 0; k < 2 * fade; k++) {
+        const a = Math.random() * TAU, d = 20 + Math.random() * 60;
+        emit({ x: cx + Math.cos(a) * d, y: cy + Math.sin(a) * d, vx: -Math.sin(a) * 30, vy: Math.cos(a) * 30 - 5, life: 1.6, max: 1.6, size: 1.2 + Math.random() * 1.5, add: false, alpha: 0.7, color: '170,150,125' });
+      }
+      ctx.globalAlpha = 0.25 * fade; ctx.fillStyle = '#6b5d4a';
+      ctx.beginPath(); ctx.arc(cx, cy, 55, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+    if (active) {
+      const pulse = Math.abs(Math.sin(t * 4));
+      ctx.fillStyle = `rgba(229,83,75,${0.5 + 0.5 * pulse})`; ctx.fillRect(40, bannerY - 4, 8, 8);
+      text(ctx, `HAZARD · ${HAZARDS[hz.id].name.toUpperCase()}`, 58, bannerY, { size: 12, color: COL.red, spacing: 2, weight: 700 });
+    }
+  }
+
+  // Impact sparks at the spacecraft (called when a hazard hits).
+  function impact(color = '255,200,140') { burst(lastCraft.x, lastCraft.y, 40, color, 160, 0.9); }
+  // Camera shake applied to hazard scenes.
+  function hazardShake(ctx, t) {
+    const hz = Game.hazard;
+    if (!hz) return;
+    let a = hz.done ? 0 : clamp(1 - (t - hz.t0) / 0.8) * 5;
+    if (hz.done && hz.hit) a = Math.max(a, clamp(1 - (t - hz.tDone) / 0.7) * 9);
+    if (a > 0) ctx.translate((Math.random() - 0.5) * 2 * a, (Math.random() - 0.5) * 2 * a);
+  }
+
   // ================================================================ SCENES
   const S = {};
 
@@ -567,9 +750,49 @@ const Draw = (() => {
     tag(ctx, 'EARTH', BRIEF.e.x, BRIEF.e.y + 108, COL.label, 'center');
     tag(ctx, 'MOON', BRIEF.m.x, BRIEF.m.y + 72, COL.label, 'center');
     tag(ctx, `MEAN DISTANCE ${NasaData.show('Mean distance from Earth (semi-major axis)', '')}`, BRIEF.m.x, BRIEF.m.y + 90, COL.faint, 'center');
-    tag(ctx, 'TARGET · SOUTH POLAR REGION', BRIEF.m.x, BRIEF.m.y - 70, COL.amber, 'center');
-    const tp = targetPos(BRIEF.m.x, BRIEF.m.y, 52);
-    targetMarker(ctx, tp.x, tp.y, t, COL.amber, 0.4);
+    tag(ctx, 'SURVEY TARGET · YOUR CHOICE', BRIEF.m.x, BRIEF.m.y - 70, COL.amber, 'center');
+    for (const reg of Object.values(REGIONS)) {
+      if (reg.side === 'far') continue;
+      const p = project(reg.lat, reg.lon, 'near');
+      ctx.fillStyle = `rgba(232,165,75,${0.5 + 0.4 * Math.sin(t * 3 + reg.lat)})`;
+      ctx.fillRect(BRIEF.m.x + p.x * 52 - 1.5, BRIEF.m.y + p.y * 52 - 1.5, 3, 3);
+    }
+  };
+
+  // Target selection: nearside globe with the candidate regions and the Apollo landing sites
+  // (coordinates from the regions CSV), plus a farside inset.
+  const TG = { x: 330, y: 400, r: 245, fx: 700, fy: 590, fr: 70 };
+  S.TARGET = (ctx, t) => {
+    background(ctx, t, 1); grid(ctx, 0.022);
+    moon(ctx, TG.x, TG.y, TG.r);
+    moon(ctx, TG.fx, TG.fy, TG.fr, { view: 'far' });
+    tag(ctx, 'NEARSIDE · ALWAYS FACES EARTH', TG.x, TG.y - TG.r - 14, COL.label, 'center');
+    tag(ctx, 'FARSIDE', TG.fx, TG.fy - TG.fr - 12, COL.label, 'center');
+    text(ctx, 'never visible from Earth', TG.fx, TG.fy + TG.fr + 12, { align: 'center', size: 9, color: COL.faint });
+    const taken = new Set(Object.values(REGIONS).map(r => r.dataKey).filter(Boolean));
+    for (const row of NasaData.rows('regions')) {
+      if (row.latitude_deg === '' || taken.has(`${row.region}|${row.key_feature}`)) continue;
+      const p = project(Number(row.latitude_deg), Number(row.longitude_deg), 'near');
+      const x = TG.x + p.x * TG.r, y = TG.y + p.y * TG.r;
+      ctx.strokeStyle = 'rgba(200,215,230,0.6)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(x, y, 2.5, 0, TAU); ctx.stroke();
+      const n = Number((row.region.match(/Apollo (\d+)/) || [])[1] || 0);
+      const westOf = n === 12;               // Apollo 12 and 14 are close together: label them on opposite sides
+      text(ctx, row.region.split(' - ')[0].toUpperCase(), westOf ? x - 6 : x + 6, n % 2 ? y - 7 : y + 9, { size: 8.5, color: 'rgba(200,215,230,0.55)', spacing: 1, align: westOf ? 'right' : 'left' });
+    }
+    const active = Game.preview || M.region;
+    for (const reg of Object.values(REGIONS)) {
+      const far = reg.side === 'far';
+      const c = far ? { x: TG.fx, y: TG.fy, r: TG.fr } : { x: TG.x, y: TG.y, r: TG.r };
+      const p = project(reg.lat, reg.lon, far ? 'far' : 'near');
+      const x = c.x + p.x * c.r, y = c.y + p.y * c.r, on = reg.id === active;
+      if (on) targetMarker(ctx, x, y, t, COL.amber, far ? 0.55 : 0.8);
+      else { ctx.strokeStyle = 'rgba(232,165,75,0.75)'; ctx.lineWidth = 1; ctx.strokeRect(x - 5, y - 5, 10, 10); }
+      const left = !far && p.x < -0.2, below = !far && p.y > 0.75;
+      const lx = far ? c.x - c.r - 10 : left ? x - 16 : x + 16, ly = far ? c.y - 4 : below ? y + 22 : y - 12;
+      text(ctx, reg.short, lx, ly, { size: 10.5, color: on ? COL.amber : 'rgba(232,165,75,0.8)', spacing: 1.5, align: far || left ? 'right' : 'left', weight: on ? 700 : 500, glow: 1 });
+    }
+    text(ctx, 'Apollo landing sites: NASA NSSDCA coordinates (regions dataset)', 40, 700, { size: 9.5, color: COL.faint });
   };
 
   function designCraft(ctx, t, x, y, tint) {
@@ -740,10 +963,11 @@ const Draw = (() => {
   const TR = { e: { x: 150, y: 480, r: 70 }, m: { x: 640, y: 230, r: 48 }, p0: { x: 205, y: 438 }, p1: { x: 360, y: 110 }, p2: { x: 595, y: 245 } };
   const TRANSFER_TIME = 6.5;
   S.TRANSFER = (ctx, t) => {
+    hazardShake(ctx, t);
     background(ctx, t, 8); grid(ctx, 0.02);
     earth(ctx, TR.e.x, TR.e.y, TR.e.r);
     moon(ctx, TR.m.x, TR.m.y, TR.m.r);
-    const pr = Game.phase === 'cruise' ? ease(clamp(Game.sceneT / TRANSFER_TIME)) : 1;
+    const pr = Game.phase === 'arrived' ? 1 : ease(clamp(progressT('cruise') / TRANSFER_TIME));
     route(ctx, TR.p0, TR.p1, TR.p2, t, pr);
     let q, ang;
     if (pr < 1) {
@@ -755,7 +979,9 @@ const Draw = (() => {
       q = { x: TR.m.x + Math.cos(th) * 80, y: TR.m.y + Math.sin(th) * 28 };
       ang = th + Math.PI / 2;
     }
-    spacecraft(ctx, q.x, q.y, 0.7, ang, craftCfg(), t, { thrust: pr >= 1 && Game.phaseT < 1.6 });
+    drawParticles(ctx);
+    spacecraft(ctx, q.x, q.y, 0.7, ang, craftCfg(), t, { thrust: (pr >= 1 && Game.phaseT < 1.6) || evading() });
+    hazardFx(ctx, t, q.x, q.y);
     const dist = NasaData.num('Mean distance from Earth (semi-major axis)');
     if (!isNaN(dist)) {
       tag(ctx, 'RANGE TO MOON', 40, 112);
@@ -787,28 +1013,53 @@ const Draw = (() => {
     text(ctx, 'Orbits stylised, not to scale (simplified game model)', OR.x, 698, { align: 'center', size: 9.5, color: COL.faint });
   };
 
-  // Survey: polar orbit seen side-on; the craft passes the south pole target.
-  const SV = { x: 400, y: 335, r: 235, rx: 92, ry: 282, rot: 0.08 };
+  // Survey: LUNA-01 flies a polar orbit whose plane passes over the chosen target.
+  const SV = { x: 400, y: 365, r: 215, k: 1.5 };
   const SCAN_TIME = 4.5;
+  function orbitPoint(theta, reg, view) {
+    const d = (reg.lon - VIEWS[view]) * D2R;
+    const xb = Math.cos(theta) * Math.sin(d), yb = Math.sin(theta), zb = Math.cos(theta) * Math.cos(d);
+    const y = yb * Math.cos(TILT) + zb * Math.sin(TILT), z = zb * Math.cos(TILT) - yb * Math.sin(TILT);
+    return { x: SV.x + xb * SV.k * SV.r, y: SV.y - y * SV.k * SV.r, front: z > 0 };
+  }
+  function orbitPath(ctx, reg, view, front) {
+    ctx.save();
+    ctx.strokeStyle = COL.cyan; ctx.globalAlpha = front ? 0.55 : 0.28; ctx.lineWidth = front ? 1 : 0.8;
+    ctx.setLineDash(front ? [] : [3, 5]);
+    ctx.beginPath();
+    let pen = false;
+    for (let i = 0; i <= 160; i++) {
+      const p = orbitPoint(i / 160 * TAU, reg, view);
+      if (p.front === front) { if (pen) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y); pen = true; } else pen = false;
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
   function surveyScene(ctx, t, o = {}) {
     background(ctx, t, 1.5);
-    const tp = targetPos(SV.x, SV.y, SV.r);
+    const reg = region(), view = regionView(reg);
+    const tp = targetPos(SV.x, SV.y, SV.r, view);
+    const latT = reg.lat * D2R;
     let th;
-    if (Game.state === 'SURVEY' && Game.phase === 'scanning') th = Math.PI * (0.62 - 0.24 * clamp(Game.phaseT / SCAN_TIME));
-    else if (o.parked || Game.phase === 'done') th = Math.PI * 0.4;
-    else th = t * 0.4;
-    const p = onEllipse(SV.x, SV.y, SV.rx, SV.ry, SV.rot, th);
+    const scanP = clamp(progressT('scanning') / SCAN_TIME);
+    const inScan = Game.state === 'SURVEY' && ['scanning', 'hazard', 'hazardDone'].includes(Game.phase);
+    if (inScan) th = latT + 0.3 - 0.6 * scanP;
+    else if (o.parked || Game.phase === 'done') th = latT + 0.1;
+    else th = latT + 1.2 + t * 0.35;
+    const p = orbitPoint(th, reg, view);
     const cfg = craftCfg();
-    orbitHalf(ctx, SV.x, SV.y, SV.rx, SV.ry, SV.rot, false, COL.cyan, 0.8, 0.3);
+    orbitPath(ctx, reg, view, false);
     if (!p.front) spacecraft(ctx, p.x, p.y, 0.55, 0, cfg, t);
-    moon(ctx, SV.x, SV.y, SV.r, { night: o.night || 0 });
-    targetMarker(ctx, tp.x, tp.y, t, COL.amber, 1);
-    orbitHalf(ctx, SV.x, SV.y, SV.rx, SV.ry, SV.rot, true, COL.cyan, 1, 0.55);
-    return { p, tp, cfg };
+    moon(ctx, SV.x, SV.y, SV.r, { night: o.night || 0, view });
+    targetMarker(ctx, tp.x, tp.y, t, COL.amber, 0.9);
+    orbitPath(ctx, reg, view, true);
+    if (view === 'far') tag(ctx, 'FARSIDE VIEW · EARTH IS BEHIND THE MOON', 40, 690, COL.faint);
+    return { p, tp, cfg, reg };
   }
 
   S.SURVEY = (ctx, t) => {
-    const { p, tp, cfg } = surveyScene(ctx, t);
+    hazardShake(ctx, t);
+    const { p, tp, cfg, reg } = surveyScene(ctx, t);
     const scanning = Game.phase === 'scanning';
     if (scanning) {
       const mode = M.selectedObservation || 'standard';
@@ -833,19 +1084,22 @@ const Draw = (() => {
       }
     }
     drawParticles(ctx);
-    spacecraft(ctx, p.x, p.y, p.front ? 0.8 : 0.55, 0, cfg, t);
-    tag(ctx, 'TARGET · SOUTH POLAR REGION', tp.x + 40, tp.y + 36, COL.amber);
-    text(ctx, 'Cabeus crater area', tp.x + 40, tp.y + 52, { size: 9.5, color: COL.faint });
+    spacecraft(ctx, p.x, p.y, p.front ? 0.8 : 0.55, 0, cfg, t, { thrust: evading() });
+    hazardFx(ctx, t, p.x, p.y, 106);
+    const lx = Math.min(tp.x + 36, 600), ly = tp.y > 560 ? tp.y - 44 : tp.y + 36;
+    tag(ctx, `TARGET · ${reg.name.toUpperCase()}`, lx, ly, COL.amber);
+    text(ctx, reg.site, lx, ly + 16, { size: 9.5, color: COL.faint });
     if (Game.phase === 'done' && Game.lastGain) {
       const k = clamp(Game.phaseT / 1.5);
       text(ctx, `+${Game.lastGain} SCIENCE`, tp.x, tp.y - 60 - k * 24, { align: 'center', size: 18, color: COL.green, spacing: 3, alpha: 1 - k * 0.4, glow: 1 });
     }
-    if (scanning) {
-      tag(ctx, `ACQUIRING · ${SCANS[M.selectedObservation].name.toUpperCase()}`, 40, 112, COL.cyan);
-      const pct = clamp(Game.phaseT / SCAN_TIME);
-      ctx.fillStyle = 'rgba(150,175,200,0.2)'; ctx.fillRect(40, 124, 220, 3);
-      ctx.fillStyle = COL.cyan; ctx.fillRect(40, 124, 220 * pct, 3);
-      text(ctx, `${Math.round(pct * 100)}%`, 270, 126, { size: 10.5, color: COL.white });
+    const paused = Game.phase === 'hazard' || Game.phase === 'hazardDone';
+    if (scanning || paused) {
+      tag(ctx, `ACQUIRING · ${SCANS[M.selectedObservation].name.toUpperCase()}${paused ? ' · PAUSED' : ''}`, 40, 130, paused ? COL.amber : COL.cyan);
+      const pct = clamp(progressT('scanning') / SCAN_TIME);
+      ctx.fillStyle = 'rgba(150,175,200,0.2)'; ctx.fillRect(40, 142, 220, 3);
+      ctx.fillStyle = COL.cyan; ctx.fillRect(40, 142, 220 * pct, 3);
+      text(ctx, `${Math.round(pct * 100)}%`, 270, 144, { size: 10.5, color: COL.white });
     }
   };
 
@@ -884,7 +1138,8 @@ const Draw = (() => {
     background(ctx, t, 2); grid(ctx, 0.02);
     moon(ctx, TX.m.x, TX.m.y, TX.m.r);
     earth(ctx, TX.e.x, TX.e.y, TX.e.r);
-    const tp = targetPos(TX.m.x, TX.m.y, TX.m.r);
+    const tp = targetPos(TX.m.x, TX.m.y, TX.m.r, 'near');
+    if (!tp.visible) tag(ctx, 'FAR SIDE TARGET · BEHIND THE LIMB', tp.x + 10, tp.y - 14, COL.amber);
     const sending = Game.phase === 'sending';
     const full = (Game.phase === 'choose' ? (Game.preview || Game.choice) : M.selectedTransmission) === 'full';
     ctx.save(); ctx.setLineDash([2, 6]); ctx.lineDashOffset = -t * 20;
@@ -974,9 +1229,9 @@ const Draw = (() => {
     ctx.restore();
   }
 
-  function init() { buildStars(); buildMoon(); buildEarth(); }
+  function init() { buildStars(); buildMoon('near'); buildEarth(); setTimeout(() => buildMoon('far'), 60); }
 
   const surveyTarget = () => targetPos(SV.x, SV.y, SV.r);
 
-  return { init, frame, updateParticles, clearParticles, burst, emit, packets, surveyTarget, SCAN_TIME, TX_TIME, TRANSFER_TIME, LT, W, H };
+  return { init, frame, updateParticles, clearParticles, burst, emit, impact, packets, surveyTarget, SCAN_TIME, TX_TIME, TRANSFER_TIME, LT, W, H };
 })();

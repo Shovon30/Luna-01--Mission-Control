@@ -1,0 +1,20 @@
+region,type,latitude_deg,longitude_deg,key_feature,value,unit,game_note,source_name,source_url
+Apollo 11 - Mare Tranquillitatis,"Mare (lava plain), nearside equatorial",0.67416,23.47314,Lunar Module landing coordinates,,,"Flat, dark basalt; safe landing terrain",NASA NSSDCA Apollo Landing Sites,https://nssdc.gsfc.nasa.gov/planetary/lunar/lunar_sites.html
+Apollo 12 - Oceanus Procellarum,"Mare, nearside",-3.0128,-23.4219,Lunar Module landing coordinates,,,,NASA NSSDCA Apollo Landing Sites,https://nssdc.gsfc.nasa.gov/planetary/lunar/lunar_sites.html
+Apollo 14 - Fra Mauro,"Highland formation, nearside",-3.64589,-17.47194,Lunar Module landing coordinates,,,,NASA NSSDCA Apollo Landing Sites,https://nssdc.gsfc.nasa.gov/planetary/lunar/lunar_sites.html
+Apollo 15 - Hadley-Apennine,"Mare edge / mountains / rille, nearside",26.13239,3.6333,Lunar Module landing coordinates,,,,NASA NSSDCA Apollo Landing Sites,https://nssdc.gsfc.nasa.gov/planetary/lunar/lunar_sites.html
+Apollo 16 - Descartes Highlands,"Highlands, nearside",-8.9734,15.5011,Lunar Module landing coordinates,,,Only Apollo site in the central highlands,NASA NSSDCA Apollo Landing Sites,https://nssdc.gsfc.nasa.gov/planetary/lunar/lunar_sites.html
+Apollo 17 - Taurus-Littrow,"Valley at mare edge, nearside",20.1911,30.7723,Lunar Module landing coordinates,,,,NASA NSSDCA Apollo Landing Sites,https://nssdc.gsfc.nasa.gov/planetary/lunar/lunar_sites.html
+Marius Hills pit,Pit / possible lava-tube skylight (Oceanus Procellarum),,,Depth,34,m,Candidate shelter site,NASA - LRO Finds Lunar Pits Harbor Comfortable Temperatures,https://www.nasa.gov/solar-system/nasas-lro-finds-lunar-pits-harbor-comfortable-temperatures/
+Marius Hills pit,Pit / possible lava-tube skylight (Oceanus Procellarum),,,Width,65 x 90,m,,NASA - LRO Finds Lunar Pits Harbor Comfortable Temperatures,https://www.nasa.gov/solar-system/nasas-lro-finds-lunar-pits-harbor-comfortable-temperatures/
+Mare Tranquillitatis pit,Pit with shadowed overhang,,,Depth,100,m,,NASA - LRO Finds Lunar Pits Harbor Comfortable Temperatures,https://www.nasa.gov/solar-system/nasas-lro-finds-lunar-pits-harbor-comfortable-temperatures/
+Mare Tranquillitatis pit,Pit with shadowed overhang,,,Temperature in shadowed part (steady),17,C,vs surface -173 C to 127 C: strong habitat bonus,NASA - LRO Finds Lunar Pits Harbor Comfortable Temperatures,https://www.nasa.gov/solar-system/nasas-lro-finds-lunar-pits-harbor-comfortable-temperatures/
+Equatorial surface (general),Open surface,,,Daytime max / night min,127 / -173,C,Day and night each ~15 Earth days,NASA - LRO Finds Lunar Pits Harbor Comfortable Temperatures,https://www.nasa.gov/solar-system/nasas-lro-finds-lunar-pits-harbor-comfortable-temperatures/
+Whole Moon,Pits,,,Known pits,>200,count,~16 likely collapsed lava tubes,NASA - LRO Finds Lunar Pits Harbor Comfortable Temperatures,https://www.nasa.gov/solar-system/nasas-lro-finds-lunar-pits-harbor-comfortable-temperatures/
+Nearside,Crust,,,Crust thickness,40,km,,NASA Science - Moon Composition,https://science.nasa.gov/moon/composition/
+Farside,Crust,,,Crust thickness,60,km,,NASA Science - Moon Composition,https://science.nasa.gov/moon/composition/
+Maria (dark plains),Composition,,,Rock chemistry,Richer in iron and titanium,-,Resource: metals / oxygen extraction,NASA Science - Moon Composition,https://science.nasa.gov/moon/composition/
+Maria (dark plains),Age,,,Lava flooding era,4.2 - 1.2,billion years ago,,NASA Science - Moon Composition,https://science.nasa.gov/moon/composition/
+Maria (dark plains),Regolith,,,Regolith depth (young maria),a few feet,-,Qualitative in source,NASA Science - Moon Composition,https://science.nasa.gov/moon/composition/
+Highlands (bright terrain),Composition,,,Rock chemistry,Rich in calcium and aluminum,-,Resource: aluminum,NASA Science - Moon Composition,https://science.nasa.gov/moon/composition/
+Highlands (bright terrain),Regolith,,,Regolith depth (older highlands),up to 20,m,,NASA Science - Moon Composition,https://science.nasa.gov/moon/composition/

@@ -226,6 +226,35 @@ const Sfx = (() => {
     tone(1000, t + 0.3, 1.2, 'sine', 0.05);                                  // carrier tone cut
   }
 
+  // Hazard signature sounds (played after the master alarm).
+  function hazard(id) {
+    if (!ac) return;
+    const t = now() + 0.3;
+    if (id === 'meteoroid') {            // proximity radar: accelerating pings
+      for (let k = 0; k < 12; k++) beep(1760, t + 2.4 * (1 - Math.pow(1 - k / 12, 1.8)), 0.05, 0.12, 'square');
+    } else if (id === 'leak') {          // venting hiss
+      noise(t, 2.6, 0.35, 'highpass', 3500, 1800, sfxBus, 0.7, 0.05);
+      tone(420, t, 1.2, 'sine', 0.05, 380);
+    } else if (id === 'seu') {           // corrupted data glitch
+      for (let k = 0; k < 18; k++) beep(200 + Math.random() * 2400, t + k * 0.05, 0.035, 0.06, 'square');
+      tone(90, t + 1, 0.6, 'sawtooth', 0.08, 60);
+    } else if (id === 'flare') {         // radiation static
+      noise(t, 2.2, 0.28, 'bandpass', 5000, 2500, sfxBus, 0.5, 0.2);
+      for (let k = 0; k < 25; k++) noise(t + Math.random() * 2, 0.02, 0.3, 'highpass', 6000, null, sfxBus, 1, 0.001);
+    } else if (id === 'dust') {          // soft grainy rustle
+      noise(t, 2, 0.2, 'bandpass', 1400, 900, sfxBus, 2, 0.3);
+    }
+  }
+
+  // Impact / damage hit. scale < 1 for a lighter thud.
+  function impact(scale = 1) {
+    if (!ac) return;
+    const t = now();
+    noise(t, 0.6 * scale + 0.2, 0.8 * scale, 'lowpass', 4000, 200, sfxBus, 0.6, 0.002);
+    tone(110, t, 0.5, 'sine', 0.6 * scale, 35, sfxBus, 0.002);
+    for (let k = 0; k < 6 * scale; k++) noise(t + 0.05 + Math.random() * 0.4, 0.03, 0.3, 'bandpass', 2500 + Math.random() * 2000, null, sfxBus, 2, 0.001);
+  }
+
   function toggleMute() {
     muted = !muted;
     try { localStorage.setItem('luna01-muted', muted ? '1' : '0'); } catch (e) { /* ignore */ }
@@ -235,7 +264,7 @@ const Sfx = (() => {
 
   return {
     init, startMusic, setMood, click, select, confirm, deny, warning, launch, separation, burn,
-    scan, transmit, success, partial, failure, toggleMute,
+    scan, transmit, success, partial, failure, toggleMute, hazard, impact,
     get muted() { return muted; },
   };
 })();
