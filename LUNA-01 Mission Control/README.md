@@ -2,8 +2,9 @@
 
 A short (about 6–8 minute) browser game for the **NASA Space Apps Challenge 2026: Space Mission Design Game**.
 You are the Mission Director of one robotic lunar science mission. You choose where on the Moon to survey, design the
-spacecraft, launch it, survive in-flight hazards, choose an orbit, survey your target using real NASA data, handle a lunar-night
-power crisis, and transmit the data home.
+spacecraft, decide how fast to fly to the Moon, launch it (with a pre-launch poll and T−5 countdown), watch it orbit Earth,
+fire the trans-lunar injection burn, coast to the Moon and brake into lunar orbit. Then you survive in-flight hazards, choose
+an orbit, survey your target using real NASA data, handle a lunar-night power crisis, and transmit the data home.
 
 > There is no perfect mission design. Every advantage has a cost.
 
@@ -45,8 +46,13 @@ src/game.js              state machine, hazard triggers, timed phases, input, ma
 docs/LUNA-01_GDD.pdf     game design document
 ```
 
-State machine: `TITLE → BRIEFING → TARGET → DESIGN → DESIGN_REVIEW → LAUNCH → TRANSFER (hazard 1) → ORBIT_DECISION →
-SURVEY (hazard 2) → MISSION_EVENT → TRANSMISSION → RESULT → REPORT → (New mission → BRIEFING)`.
+State machine: `TITLE → BRIEFING → TARGET → DESIGN → DESIGN_REVIEW → TRAJECTORY (travel strategy) → LAUNCH (poll, T−5
+countdown, ascent) → TRANSFER → ORBIT_DECISION → SURVEY (hazard 2) → MISSION_EVENT → TRANSMISSION → RESULT → REPORT →
+(New mission → BRIEFING)`.
+
+`TRANSFER` runs the Earth-to-Moon journey as phases, mirrored in `M.flightPhase`:
+`parking` (EARTH_ORBIT, two visible orbits) → `tli` (TLI_BURN: engine burn, fuel deducted) → `cruise`
+(TRANS_LUNAR_TRANSFER, possible hazard 1) → `loi` (LUNAR_ORBIT_INSERTION: retro-burn, fuel deducted) → `arrived` (LUNAR_ORBIT).
 
 ## NASA datasets
 
@@ -86,9 +92,23 @@ Budget, power, fuel, science, mass, communication, risk, hazard odds and target 
   | Descartes Highlands | Spectrometer +12, science ×1.05 | deep dusty regolith: HIGH dust threat in low orbit |
   | Far Side Highlands | science ×1.25 | no line of sight (tidal lock): downlink +40% power, +8 risk, −5% fuel |
 
+- **Travel strategy (before launch):** how quickly do you want to reach the Moon? Each strategy is an average cruise speed;
+  travel time = ~2.7 h parking orbit + Earth-Moon distance × path factor ÷ speed. The distance is drawn per launch window
+  inside the NASA perigee-apogee range. Transfer fuel = mass ÷ 10 × (speed ÷ balanced speed)^1.2, spent 60% at trans-lunar
+  injection and 40% at lunar orbit insertion. Historical references (Apollo 8 ≈ 69 h 08 m, Apollo 11 ≈ 75 h 50 m,
+  Artemis I ≈ 5 days) calibrate the speeds.
+
+  | Strategy | Time (mean distance) | Fuel (555 kg craft) | Time-linked consequences |
+  |---|---|---|---|
+  | FAST | ≈2 d 14 h | ≈71% (HIGH) | −1% cruise power, +4 risk (hot arrival), transit hazard ≈36%, night load ×0.89 |
+  | BALANCED (recommended) | ≈3 d 4 h (Apollo 11) | ≈56% (MEDIUM) | −3% cruise power, transit hazard ≈70% |
+  | FUEL-SAVING | ≈5 d (Artemis I) | ≈43% (LOW) | −9% cruise power, transit hazard 100%, night load ×1.35, more radiation hazards |
+
+  Strategies that would leave less than 10% fuel after lunar orbit insertion are disabled. If a hazard drains the tank
+  mid-coast, the insertion burn can fail and LUNA-01 flies past the Moon.
 - **Design:** rocket, power system, instrument and **protection kit** (Whipple shield, rad-hard avionics, dust covers or a
   spare tank). Each kit counters one family of hazards; a **threat forecast** shows the odds before launch.
-- **Hazards:** one strikes during the transfer and one mid-survey. The pool is a meteoroid swarm, a propellant leak, a
+- **Hazards:** one may strike during the transfer (chance set by coast time) and one strikes mid-survey. The pool is a meteoroid swarm, a propellant leak, a
   flight-computer upset, a solar particle event and charged-dust contamination. The odds depend on the target, condition,
   rocket and orbit. Each hazard offers 2–3 responses, some of them gambles with visible odds. The matching kit unlocks a cheap response.
 - **Objectives:** full success needs science ≥ goal, end power ≥ 15% and end fuel ≥ 10%. Failure means power reached 0%,

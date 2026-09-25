@@ -16,6 +16,11 @@ Spec: `docs/LUNA-01_GDD.pdf`. Data: the four CSVs in `data/` (authoritative; nev
 
 ## Architecture
 - `Game.go(state)` switches state; `ENTER[state]` runs setup; `Game.setPhase()` handles sub-steps (choose → animating → done).
+- Travel: `TRAVEL_MODES` + `travelPlan(id, mass)` in state.js (time, fuel split TLI/LOI, cruise power, risk, night factor,
+  transit-hazard chance). Chosen on TRAJECTORY, locked by `setTravel()` on LAUNCH; `departEarth()` (TLI) and `arrive()` (LOI)
+  spend the fuel. TRANSFER phases: parking → tli → cruise → loi → arrived, mirrored in `M.flightPhase`. Earth-Moon distances
+  are injected from the orbital CSV with `setEarthMoon()` at boot.
+- Launch timeline `Draw.LT`: pre-launch poll until `count`, T-5 countdown until `ignite`; nothing lifts off before T-0.
 - Hazards: `startHazard(slot)` pauses the current phase (`Game.hazard.resume`), phases `hazard` → `hazardDone` → resume.
   Progress clocks in render.js use `progressT(phase)` so they freeze while a hazard is open.
 - Timed transitions live in `update(dt)` in src/game.js. UI panels are rebuilt only on state/phase/selection change.
@@ -25,7 +30,7 @@ Spec: `docs/LUNA-01_GDD.pdf`. Data: the four CSVs in `data/` (authoritative; nev
 ## Testing
 - Serve with `python -m http.server 8123` (launch config in .claude/launch.json).
 - Balance check: every path's outcome can be enumerated headlessly by loading src/state.js in Node and calling
-  resetMission(scenarioId); M.region = id → commitDesign → resolveHazard(slot 1) → arrive → chooseOrbit → resolveHazard(slot 2)
+  resetMission(scenarioId); M.region = id → commitDesign → setTravel → departEarth → resolveHazard(slot 1, prob. hazardChance) → arrive → chooseOrbit → resolveHazard(slot 2)
   → runScan → applyEventDrain → chooseEvent → transmit → evaluate (expectimax over hazardWeights and gamble odds).
   Targets: optimal play wins most region x condition combos; random design + good play ~15-30%; kits matter where threat is HIGH.
 - Earth/Moon textures are generated per-pixel in Draw.init() (nearside + Earth at boot, farside deferred); keep per-frame drawing to drawImage + light overlays.

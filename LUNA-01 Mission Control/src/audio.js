@@ -226,6 +226,26 @@ const Sfx = (() => {
     tone(1000, t + 0.3, 1.2, 'sine', 0.05);                                  // carrier tone cut
   }
 
+  // Launch countdown: one crisp beep per second; T-1 adds a rising tone to build anticipation.
+  function countdown(n) {
+    if (!ac) return;
+    const t = now();
+    if (n > 1) { beep(1000, t, 0.14, 0.16); beep(2000, t, 0.05, 0.04); return; }
+    beep(1320, t, 0.22, 0.18);
+    tone(220, t + 0.05, 0.95, 'sawtooth', 0.06, 880, sfxBus, 0.3);
+    noise(t + 0.1, 0.9, 0.12, 'lowpass', 300, 1200, sfxBus, 0.7, 0.5);
+  }
+
+  // Trans-lunar injection: long, rising engine burn.
+  function tli(dur = 2.4) {
+    if (!ac) return;
+    const t = now();
+    quindar(false, t, 0.1);
+    noise(t + 0.2, dur + 0.4, 0.55, 'lowpass', 500, 900, sfxBus, 0.8, 0.25);
+    tone(60, t + 0.2, dur + 0.4, 'sawtooth', 0.12, 110, sfxBus, 0.3);
+    tone(180, t + 0.2, dur, 'triangle', 0.05, 420, sfxBus, 0.4);
+  }
+
   // Hazard signature sounds (played after the master alarm).
   function hazard(id) {
     if (!ac) return;
@@ -264,7 +284,7 @@ const Sfx = (() => {
 
   return {
     init, startMusic, setMood, click, select, confirm, deny, warning, launch, separation, burn,
-    scan, transmit, success, partial, failure, toggleMute, hazard, impact,
+    scan, transmit, success, partial, failure, toggleMute, hazard, impact, countdown, tli,
     get muted() { return muted; },
   };
 })();

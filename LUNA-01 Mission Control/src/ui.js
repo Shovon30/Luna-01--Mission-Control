@@ -277,7 +277,7 @@ const UI = (() => {
       tile('BUDGET USED', `$${d.budgetUsed}M`, `cap $${budgetCap()}M`, s.rocket || s.power || s.instrument || s.kit ? d.budgetUsed <= budgetCap() : null),
       tile('MASS', `${d.mass} kg`, `limit ${d.capacity} kg`, s.rocket ? d.mass <= d.capacity : null),
       tile('POWER', d.power == null ? dash : `${d.power}%`, `min ${RULES.minPower}%`, d.power == null ? null : d.power >= RULES.minPower),
-      tile('FUEL', d.fuel == null ? dash : `${d.fuel}%`, d.fuel == null ? 'set by rocket' : `≈${d.arrivalFuel}% at Moon`, d.fuel == null ? null : d.arrivalFuel >= RULES.minArrivalFuel),
+      tile('FUEL', d.fuel == null ? dash : `${d.fuel}%`, d.fuel == null ? 'set by rocket' : `≈${d.arrivalFuel}% at Moon (balanced)`, d.fuel == null ? null : d.arrivalFuel >= RULES.minArrivalFuel),
       tile('COMM', `${d.comm}`, `${commLabel(d.comm).toLowerCase()}${reg.side === 'far' ? ' · far side!' : ''}`, null),
       tile('SCIENCE / SCAN', d.sciencePotential == null ? dash : `${d.sciencePotential}`, `standard · goal ${scienceGoal()}`, null),
     ].join('');
@@ -307,24 +307,62 @@ const UI = (() => {
       <div class="verdict ${rv.ok ? 'ok' : 'bad'}">${rv.ok ? 'GO FOR LAUNCH' : 'NO-GO · RETURN TO DESIGN'}</div>
       ${rv.ok ? threatStrip(Game.sel.rocket) : ''}
       <div class="actions">
-        ${rv.ok ? btn('LAUNCH', 'launch', { cls: 'go', primary: true }) : ''}
+        ${rv.ok ? btn('PLAN TRAVEL STRATEGY', 'to-trajectory', { cls: 'go', primary: true }) : ''}
         ${btn('MODIFY DESIGN', 'redesign', { primary: !rv.ok })}
       </div>` };
   };
 
-  const LAUNCH_STEPS = ['Countdown', 'Ignition', 'Liftoff', 'Max-Q · ascent', 'Stage separation', 'Spacecraft separation', 'Launch successful'];
-  P.LAUNCH = () => {
-    const i = Game.launchStep;
-    const list = LAUNCH_STEPS.map((s, k) => `<li class="${k < i ? 'done' : k === i ? 'now' : ''}">${k < i ? '✓' : k === i ? '▶' : '○'} ${s}</li>`).join('');
-    const pct = Math.round((Math.max(0, i) / (LAUNCH_STEPS.length - 1)) * 100);
+  // ---- Travel strategy: how quickly do you want to reach the Moon?
+  function travelSummary(tp, fuelNow) {
+    return `<div class="travel-sum">
+      <div><span>Selected strategy</span><b>${tp.short}</b></div>
+      <div><span>Estimated lunar arrival</span><b>${fmtDuration(tp.hours, true)}</b></div>
+      <div><span>Estimated fuel cost</span><b>${tp.fuelTotal}% <small>TLI ${tp.tli} + LOI ${tp.loi}</small></b></div>
+      <div><span>Remaining fuel</span><b>${fuelNow - tp.fuelTotal}%</b></div>
+    </div>`;
+  }
+  P.TRAJECTORY = () => {
+    const d = computeDesign(Game.sel);
+    const opts = Object.keys(TRAVEL_MODES).map((id, k) => {
+      const m = TRAVEL_MODES[id], tp = travelPlan(id, d.mass), left = d.fuel - tp.fuelTotal, ok = left >= RULES.minArrivalFuel;
+      const hz = Math.round(tp.hazardChance * 100);
+      return option({
+        id, key: k + 1, name: m.name, badge: id === 'balanced' ? 'RECOMMENDED' : `FUEL USE ${m.usage}`, desc: `<i>${m.ref}</i>`,
+        chips: [{ t: `⏱ ≈${fmtDuration(tp.hours)}`, tone: 'neutral' }, chip('fuel', -tp.fuelTotal)]
+          .concat(tp.cruisePower ? [chip('power', -tp.cruisePower)] : []).concat(tp.risk ? [chip('risk', tp.risk)] : [])
+          .concat([{ t: `${hz < 50 ? '▲' : hz > 80 ? '▼' : '•'} Transit hazard ${hz}%`, tone: hz < 50 ? 'good' : hz > 80 ? 'bad' : 'neutral' },
+            { t: `${tp.nightFactor < 0.97 ? '▲' : tp.nightFactor > 1.03 ? '▼' : '•'} Night load ×${tp.nightFactor.toFixed(2)}`, tone: tp.nightFactor < 0.97 ? 'good' : tp.nightFactor > 1.03 ? 'bad' : 'neutral' }]),
+        selected: Game.choice === id, disabled: !ok,
+        warn: !ok ? `Not enough fuel: would arrive with ${left}% (need ${RULES.minArrivalFuel}%)` : left < RULES.fuelReserve + 12 ? `Arrives with only ${left}% fuel` : '',
+      });
+    }).join('');
+    const sel = Game.choice ? travelPlan(Game.choice, d.mass) : null;
     return {
       cls: 'right', html: `
-      ${header('LAUNCH', `${ROCKETS[M.selectedRocket].name}`, 'Automatic sequence. No piloting required.')}
+      ${header(`CHECKPOINT 2 / 4 · TRAVEL STRATEGY <button class="link" data-act="redesign">modify design</button>`, 'How Fast to the Moon?', `Faster = more fuel &amp; risk. Slower = saves fuel, but days longer in transit. Launch fuel ${d.fuel}%.`)}
+      <div class="opts">${opts}</div>
+      ${sel ? travelSummary(sel, d.fuel) : ''}
+      ${btn(sel ? `LOCK ${sel.short} · FINAL PRE-LAUNCH CHECKS` : 'SELECT A TRAVEL STRATEGY', 'confirm', { cls: 'go', primary: true, disabled: !sel })}` };
+  };
+
+  const POLL = () => [`Target · ${REGIONS[M.region] ? REGIONS[M.region].short : '—'}`, `Vehicle · ${ROCKETS[M.selectedRocket].name}`,
+    `Trajectory · ${M.travel ? M.travel.short : '—'} (locked)`, 'Propellant loaded', 'Range safety', 'Weather', 'Flight director'];
+  const POLL_COUNT = 7;
+  const LAUNCH_STEPS = ['Final pre-launch checks', 'Countdown T−5', 'Ignition · Liftoff', 'Max-Q · ascent', 'Stage separation', 'Spacecraft separation', 'Earth orbit reached'];
+  P.LAUNCH = () => {
+    const i = Game.launchStep, tp = M.travel;
+    const list = LAUNCH_STEPS.map((s, k) => `<li class="${k < i ? 'done' : k === i ? 'now' : ''}">${k < i ? '✓' : k === i ? '▶' : '○'} ${s}${k === 1 && i === 1 && Game.countdown ? ` · T−${Game.countdown}` : ''}</li>`).join('');
+    const pct = Math.round((Math.max(0, i) / (LAUNCH_STEPS.length - 1)) * 100);
+    const poll = POLL().map((s, k) => `<li class="${k < Game.pollStep ? 'go' : ''}"><span>${s}</span><b>${k < Game.pollStep ? 'GO' : '…'}</b></li>`).join('');
+    const title = i === 0 ? 'Final Pre-Launch Checks' : i === 1 ? `Countdown · T−${Game.countdown || 5}` : ROCKETS[M.selectedRocket].name;
+    return {
+      cls: 'right', html: `
+      ${header('LAUNCH', title, tp ? `Strategy locked: <b>${tp.short}</b> · est. arrival ${fmtDuration(tp.hours, true)} · transfer fuel ${tp.fuelTotal}%.` : 'Automatic sequence. No piloting required.')}
+      <ul class="poll">${poll}</ul>
       <div class="progress"><i style="width:${pct}%"></i><span>${pct}%</span></div>
       <ol class="steps">${list}</ol>
-      <div class="data">${dRow('Earth escape speed', 'Earth|Escape velocity', 'orbit')}${dRow('Earth gravity', 'Surface gravity (mean)', 'orbit')}</div>
-      ${factBox()}
-      ${Game.phase === 'done' ? `<div class="verdict ok">✓ LAUNCH SUCCESSFUL</div>${btn('PROCEED TO LUNAR TRANSFER', 'to-transfer', { cls: 'go', primary: true })}` : ''}` };
+      ${Game.phase === 'done' ? `<div class="verdict ok">✓ EARTH ORBIT REACHED</div>${btn('BEGIN EARTH ORBIT OPERATIONS', 'to-transfer', { cls: 'go', primary: true })}`
+        : `<div class="data">${dRow('Earth escape speed', 'Earth|Escape velocity', 'orbit')}</div>${factBox()}`}` };
   };
 
   // ---- In-flight hazard panel (shared by TRANSFER and SURVEY)
@@ -365,6 +403,38 @@ const UI = (() => {
 
   P.TRANSFER = () => {
     if (Game.phase === 'hazard' || Game.phase === 'hazardDone') return hazardPanel();
+    const tp = M.travel;
+    const plan = tp ? `<div class="kvs">
+        <div class="kv"><span>Strategy</span><b>${tp.short} · ${fmtDuration(tp.hours, true)}</b></div>
+        <div class="kv"><span>TLI burn / LOI burn</span><b>${tp.tli}% / ${tp.loi}% fuel</b></div>
+        <div class="kv"><span>Transit hazard chance</span><b>${Math.round(tp.hazardChance * 100)}%</b></div>
+      </div>` : '';
+    if (Game.phase === 'parking') {
+      return {
+        cls: 'right', html: `
+        ${header('CHECKPOINT 2 / 4 · EARTH ORBIT', 'Earth Parking Orbit', 'LUNA-01 has reached Earth orbit. Two orbits of systems checkout before the trans-lunar injection (TLI) burn.')}
+        ${plan}
+        ${insight(`Earth escape velocity ${show('Earth|Escape velocity', 'orbit')}${tag('nasa')}.`,
+          'Orbit is not enough to reach the Moon: the TLI burn must boost LUNA-01 close to Earth\'s escape velocity.',
+          `A <b>${tp ? tp.short : ''}</b> transfer spends <b>${tp ? tp.tli : '?'}% fuel</b> on this burn.`)}
+        ${factBox()}
+        <div class="wait">◌ Orbiting Earth…</div>` };
+    }
+    if (Game.phase === 'tli') {
+      const e = M.log.filter(l => l.title === 'Trans-lunar injection burn').pop();
+      return {
+        cls: 'right', html: `
+        ${header('CHECKPOINT 2 / 4 · TRANS-LUNAR INJECTION', 'Engine Burn', `Main engine firing. LUNA-01 is accelerating out of Earth orbit onto a ${tp ? tp.name.toLowerCase() : ''} trajectory.`)}
+        ${e ? `<div class="logline"><b>${esc(e.title)}</b>${chips(e.chips)}<span>${esc(e.detail)}</span></div>` : ''}
+        ${plan}
+        <div class="wait">◌ Burning… fuel now ${M.fuel}%</div>` };
+    }
+    if (Game.phase === 'loi') {
+      return {
+        cls: M.failure ? 'right alert' : 'right', html: `
+        ${header('CHECKPOINT 2 / 4 · LUNAR ORBIT INSERTION', M.failure ? 'Capture Failed' : 'Entering Lunar Orbit', M.failure ? '' : `Retro-burn to slow below lunar escape speed: fuel −${tp ? tp.loi : '?'}%.`)}
+        ${M.failure ? `<div class="verdict bad">✗ ${M.failure}</div>${btn('VIEW MISSION RESULT', 'to-result', { cls: 'warn', primary: true })}` : `${plan}<div class="wait">◌ Braking…</div>`}` };
+    }
     const dist = dRow('Mean distance', 'Semi-major axis (mean Earth-Moon distance)', 'orbit');
     const range = dRow('Range', 'Perigee (closest)', 'orbit', v => `${v} (perigee) to ${show('Apogee (farthest)', 'orbit')} (apogee)`);
     const vel = dRow('Moon speed', 'Moon orbit|Mean orbital velocity', 'orbit', v => `${v} around Earth`);
@@ -372,20 +442,32 @@ const UI = (() => {
     if (Game.phase === 'cruise') {
       return {
         cls: 'right', html: `
-        ${header('CHECKPOINT 2 / 4', 'Lunar Transfer', 'LUNA-01 is coasting toward the Moon. Tracking stations are watching for trouble.')}
+        ${header('CHECKPOINT 2 / 4 · TRANS-LUNAR COAST', 'Lunar Transfer', `Engine off - coasting to the Moon on a ${tp ? tp.name.toLowerCase() : 'transfer'} (${tp ? fmtDuration(tp.hours, true) : ''}). Tracking stations are watching for trouble.`)}
         <div class="data">${dist}${range}${vel}${delay}</div>
         ${factBox()}
         <p class="note">Travel is a stylised animation - not a real orbital-mechanics simulation.</p>
         <div class="wait">◌ In transit…</div>` };
     }
+    if (M.failure) {
+      return {
+        cls: 'right alert', html: `
+        ${header('CHECKPOINT 2 / 4 · LUNAR ORBIT INSERTION', 'Mission Lost at the Moon', '')}
+        <div class="verdict bad">✗ ${M.failure}</div>
+        ${btn('VIEW MISSION RESULT', 'to-result', { cls: 'warn', primary: true })}` };
+    }
     const loi = M.log.find(l => l.title === 'Lunar orbit insertion burn');
+    const used = M.log.filter(l => l.stage === 'Transfer' && /burn/.test(l.title)).reduce((a, l) => a + l.chips.filter(c => /Fuel/.test(c.t)).reduce((b, c) => b + Number(c.t.replace(/[^0-9]/g, '')), 0), 0);
     return {
       cls: 'right', html: `
-      ${header('CHECKPOINT 2 / 4', 'Lunar Arrival', 'Braking burn complete. LUNA-01 has been captured by the Moon.')}
+      ${header('CHECKPOINT 2 / 4 · LUNAR ORBIT', 'Lunar Orbit Established', 'Braking burn complete. LUNA-01 has been captured by the Moon.')}
+      <div class="kvs">
+        <div class="kv"><span>Travel time (${tp ? tp.short : ''})</span><b>${tp ? fmtDuration(tp.hours, true) : '—'}</b></div>
+        <div class="kv"><span>Propellant used for the transfer</span><b>${used}%</b></div>
+        <div class="kv"><span>Fuel remaining</span><b>${M.fuel}%</b></div>
+      </div>
       ${insight(`Lunar escape velocity ${show('Escape velocity')}${tag('nasa')} vs Earth's ${show('Earth|Escape velocity', 'orbit')}${tag('nasa')}.`,
         'The Moon\'s weak gravity makes capture cheap compared with leaving Earth - but LUNA-01 must still brake below lunar escape speed.',
-        `Orbit insertion used fuel = mass ÷ 10 → ${loi ? chips(loi.chips) : ''}`)}
-      <div class="data">${dist}${delay}</div>
+        `Orbit insertion burn → ${loi ? chips(loi.chips) : ''}`)}
       ${btn('CHOOSE LUNAR ORBIT', 'to-orbit', { cls: 'go', primary: true })}` };
   };
 
@@ -558,7 +640,7 @@ const UI = (() => {
       tile('BUDGET USED', `$${M.budgetUsed}M`, `${Math.round(M.budgetUsed / budgetCap() * 100)}% of $${budgetCap()}M cap`, null),
       tile('MISSION RISK', `${riskLevel(M.risk)}`, `risk score ${M.risk} (game model)`, M.risk < RULES.riskHigh),
       tile('HAZARDS', `${M.hazards.length}`, M.hazards.map(h => HAZARDS[h.id].name.split(' ')[h.id === 'seu' ? 1 : 0].toLowerCase()).join(' · ') || 'none', null),
-      tile('CONDITION', scenario().name, `strategy: ${strat.name.toLowerCase()}`, null),
+      tile('TRAVEL', M.travel ? M.travel.short : '—', M.travel ? `${fmtDuration(M.travel.hours)} · ${M.travel.fuelTotal}% fuel · ${scenario().name}` : scenario().name, null),
     ].join('');
     const decisions = M.log.map(l => `
       <div class="dec ${l.stage === 'Hazard' ? 'hz' : ''}"><span class="d-stage">${l.stage.toUpperCase()}</span><b>${esc(l.title)}</b>${chips(l.chips)}</div>`).join('');
@@ -595,16 +677,19 @@ const UI = (() => {
     hud();
   }
 
-  const TRACK = ['TARGET', 'DESIGN', 'LAUNCH', 'ORBIT', 'SURVEY', 'DOWNLINK', 'RESULT'];
+  const TRACK = ['TARGET', 'DESIGN', 'LAUNCH', 'TRANSFER', 'ORBIT', 'SURVEY', 'DOWNLINK', 'RESULT'];
+  const TRANSFER_LABEL = { parking: 'EARTH ORBIT', tli: 'TRANS-LUNAR INJECTION', cruise: 'TRANS-LUNAR COAST', hazard: 'TRANS-LUNAR COAST', hazardDone: 'TRANS-LUNAR COAST', loi: 'LUNAR ORBIT INSERTION', arrived: 'LUNAR ORBIT' };
   const STAGE_INFO = {
     BRIEFING: [-1, 'MISSION BRIEFING'], TARGET: [0, 'CHECKPOINT 1 / 4 · TARGET'],
     DESIGN: [1, 'CHECKPOINT 1 / 4 · MISSION DESIGN'], DESIGN_REVIEW: [1, 'CHECKPOINT 1 / 4 · DESIGN VALIDATION'],
-    LAUNCH: [2, 'LAUNCH'], TRANSFER: [3, 'CHECKPOINT 2 / 4 · LUNAR TRANSFER'], ORBIT_DECISION: [3, 'CHECKPOINT 2 / 4 · ORBIT DECISION'],
-    SURVEY: [4, 'CHECKPOINT 3 / 4 · LUNAR SURVEY'], MISSION_EVENT: [4, 'CHECKPOINT 3 / 4 · MISSION EVENT'],
-    TRANSMISSION: [5, 'CHECKPOINT 4 / 4 · DATA TRANSMISSION'], RESULT: [6, 'MISSION RESULT'], REPORT: [7, 'FINAL REPORT'],
+    TRAJECTORY: [2, 'CHECKPOINT 2 / 4 · TRAVEL STRATEGY'], LAUNCH: [2, 'LAUNCH'],
+    TRANSFER: () => [3, `CHECKPOINT 2 / 4 · ${TRANSFER_LABEL[Game.phase] || 'LUNAR TRANSFER'}`], ORBIT_DECISION: [4, 'CHECKPOINT 2 / 4 · ORBIT DECISION'],
+    SURVEY: [5, 'CHECKPOINT 3 / 4 · LUNAR SURVEY'], MISSION_EVENT: [5, 'CHECKPOINT 3 / 4 · MISSION EVENT'],
+    TRANSMISSION: [6, 'CHECKPOINT 4 / 4 · DATA TRANSMISSION'], RESULT: [7, 'MISSION RESULT'], REPORT: [8, 'FINAL REPORT'],
   };
   function tracker() {
-    const info = STAGE_INFO[Game.state];
+    const raw = STAGE_INFO[Game.state];
+    const info = typeof raw === 'function' ? raw() : raw;
     const vis = !!info;
     $('hud').classList.toggle('hidden', !vis);
     $('tracker').classList.toggle('hidden', !vis);
@@ -632,7 +717,7 @@ const UI = (() => {
   function hud() {
     let v;
     if (Game.state === 'BRIEFING' || Game.state === 'TARGET') v = { power: null, fuel: null, budget: budgetCap(), science: 0, risk: 0 };
-    else if (Game.state === 'DESIGN' || Game.state === 'DESIGN_REVIEW') {
+    else if (Game.state === 'DESIGN' || Game.state === 'DESIGN_REVIEW' || Game.state === 'TRAJECTORY') {
       const d = computeDesign(Game.sel);
       v = { power: d.power, fuel: d.fuel, budget: budgetCap() - d.budgetUsed, science: 0, risk: d.risk };
     } else v = { power: M.power, fuel: M.fuel, budget: M.budget, science: M.science, risk: M.risk };
@@ -665,5 +750,5 @@ const UI = (() => {
 
   function hideToast() { $('toast').classList.remove('show'); }
 
-  return { render, hud, toast, hideToast, setMuteLabel, tickFact };
+  return { render, hud, toast, hideToast, setMuteLabel, tickFact, POLL_COUNT };
 })();

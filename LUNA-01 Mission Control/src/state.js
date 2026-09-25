@@ -257,6 +257,36 @@ const HAZARDS = {
   },
 };
 
+// Earth-Moon travel strategies (player decision before launch).
+// Each strategy is an average cruise speed (and path-length factor for the wider route).
+//   travel time  = parking orbit + distance x path / speed
+//   transfer fuel = existing mass/10 budget x (speed / balanced speed)^1.2, split 60% TLI / 40% LOI
+// Speeds are calibrated so that, at the NASA mean Earth-Moon distance, BALANCED matches the Apollo 11
+// reference (~75 h 50 m) and FUEL-SAVING the Artemis I reference (~5 days). FAST is a direct
+// high-energy transfer, quicker than Apollo 8 (~69 h). Historical times are reference points only.
+const PARKING_HOURS = 2.7;        // time in Earth parking orbit before trans-lunar injection (game model)
+const TRAVEL_MODES = {
+  fast: {
+    id: 'fast', name: 'Fast Transfer', short: 'FAST', speed: 1.80, path: 1.0, usage: 'HIGH',
+    desc: 'Direct, high-energy trajectory. Arrive first - burn the most propellant.',
+    ref: 'Quicker than Apollo 8 (≈69 h 08 m to lunar orbit)',
+  },
+  balanced: {
+    id: 'balanced', name: 'Balanced Transfer', short: 'BALANCED', speed: 1.461, path: 1.0, usage: 'MEDIUM',
+    desc: 'Classic Apollo-style coast: moderate time, moderate propellant.',
+    ref: 'Apollo 11 reference (≈75 h 50 m to reach the Moon)',
+  },
+  efficient: {
+    id: 'efficient', name: 'Fuel-Saving Transfer', short: 'FUEL-SAVING', speed: 1.183, path: 1.3, usage: 'LOW',
+    desc: 'Wider, low-energy trajectory. Saves propellant for lunar operations - arrives days later.',
+    ref: 'Artemis I reference (≈5 days, wider fuel-saving path)',
+  },
+};
+// Earth-Moon distances (km). Overwritten from earth_moon_orbital_dataset.csv at boot (setEarthMoon);
+// the defaults only exist so the model also runs headless in balance tests.
+const EARTH_MOON = { mean: 384400, perigee: 363300, apogee: 405500 };
+function setEarthMoon(d) { for (const k of ['mean', 'perigee', 'apogee']) if (isFinite(d[k])) EARTH_MOON[k] = d[k]; }
+
 // ---------------------------------------------------------------- mission condition helpers
 
 const M = {};
@@ -282,7 +312,35 @@ function pickScenario(avoid) {
 
 // ---------------------------------------------------------------- formulas
 
-const loiFuel = mass => Math.round(mass / 10); // lunar orbit insertion burn (game model)
+const clamp01 = x => Math.max(0.1, Math.min(1, x));
+const loiFuel = mass => Math.round(mass / 10); // total Earth-to-lunar-orbit propellant for a balanced transfer (game model)
+
+// Hours as "2 d 14 h" (or "2 Days 14 Hours" when long).
+function fmtDuration(h, long) {
+  const d = Math.floor(h / 24), hr = Math.round(h - d * 24);
+  const dd = hr === 24 ? d + 1 : d, hh = hr === 24 ? 0 : hr;
+  return long ? `${dd} Day${dd === 1 ? '' : 's'} ${hh} Hour${hh === 1 ? '' : 's'}` : `${dd} d ${hh} h`;
+}
+
+// Full consequences of a travel strategy for a spacecraft of the given mass.
+function travelPlan(id, mass = M.mass) {
+  const m = TRAVEL_MODES[id], b = TRAVEL_MODES.balanced;
+  const dist = M.moonDistance || EARTH_MOON.mean, dr = dist / EARTH_MOON.mean;
+  const cruiseHours = dist * m.path / m.speed / 3600;
+  const hours = PARKING_HOURS + cruiseHours;
+  const refCruise = EARTH_MOON.mean / b.speed / 3600;                 // balanced coast at mean distance
+  const energy = Math.pow(m.speed / b.speed, 1.2);                     // faster = more energetic burns
+  const fuelTotal = Math.round(mass / 10 * energy * Math.sqrt(dr));
+  const tli = Math.round(fuelTotal * 0.6), loi = fuelTotal - tli;
+  return {
+    id, name: m.name, short: m.short, usage: m.usage, dist, hours, cruiseHours, fuelTotal, tli, loi,
+    cruisePower: Math.max(0, Math.round((cruiseHours / 24 - 2) * 3)),  // heaters, attitude control, comms: 3% per day beyond 2 days
+    risk: rk(Math.max(0, Math.round((energy - 1) * 14))),              // high arrival speed makes capture less forgiving
+    nightFactor: 1 + 0.6 * ((PARKING_HOURS + cruiseHours) / (PARKING_HOURS + refCruise) - 1), // later arrival = deeper into lunar night
+    hazardChance: clamp01((cruiseHours - 45) / 40),                    // longer coast = more time for something to go wrong
+    exposure: cruiseHours / refCruise,                                 // longer coast = more radiation exposure
+  };
+}
 
 function computeDesign(sel) {
   const r = ROCKETS[sel.rocket], p = POWER_SYSTEMS[sel.power], i = INSTRUMENTS[sel.instrument], k = KITS[sel.kit];
@@ -295,7 +353,7 @@ function computeDesign(sel) {
     complete, budgetUsed, mass, fuel,
     capacity: r ? r.capacity : RULES.maxMass,
     power: p ? p.power - (i ? i.draw : 0) : null,
-    arrivalFuel: r ? fuel - loiFuel(mass) : null,
+    arrivalFuel: r ? fuel - Math.round(loiFuel(mass) * Math.sqrt((M.moonDistance || EARTH_MOON.mean) / EARTH_MOON.mean)) : null,
     comm: BUS.comm + (r ? r.comm : 0) + (p ? p.comm : 0),
     sciencePotential: i ? Math.round(i.scan * reg.sci) + instrBonus(i) : null,
     risk: rk((r ? r.risk : 0) + (p ? p.risk : 0)),
@@ -324,7 +382,7 @@ function validateDesign(sel) {
     },
     {
       id: 'mission', label: 'Mission (fuel to reach orbit)', ok: d.arrivalFuel >= RULES.minArrivalFuel,
-      value: `${d.fuel}% → ${d.arrivalFuel}% after lunar arrival (minimum ${RULES.minArrivalFuel}%)`,
+      value: `${d.fuel}% → ${d.arrivalFuel}% after lunar arrival on a balanced transfer (minimum ${RULES.minArrivalFuel}%)`,
       fix: 'Not enough propellant to brake into lunar orbit. Carry more fuel (bigger rocket, spare tank) or reduce mass.',
     },
   ];
@@ -339,11 +397,12 @@ function hazardWeights(slot, ctx = {}) {
   const rocket = ctx.rocket || M.selectedRocket || 'medium';
   const low = (ctx.orbit || M.selectedOrbit) === 'low';
   if (slot === 1) {
+    const ex = ctx.exposure || (M.travel ? M.travel.exposure : 1);
     return {
       meteoroid: 1.0,
       leak: { light: 1.4, medium: 0.9, heavy: 0.6 }[rocket],
-      seu: solar ? 1.1 : 0.6,
-      flare: solar ? 1.6 : 0.3,
+      seu: (solar ? 1.1 : 0.6) * ex,
+      flare: (solar ? 1.6 : 0.3) * ex,
     };
   }
   return {
@@ -365,8 +424,8 @@ function drawHazard(slot, exclude, roll = Math.random()) {
 
 // Chance that each hazard strikes at least once, for the pre-launch threat forecast.
 // Dust is evaluated for a LOW orbit (worst case) and flagged as such.
-function threatForecast(rocket) {
-  const p = (slot, orbit) => { const w = hazardWeights(slot, { rocket, orbit }); const t = Object.values(w).reduce((a, b) => a + b, 0); return id => (w[id] || 0) / t; };
+function threatForecast(rocket, exposure) {
+  const p = (slot, orbit) => { const w = hazardWeights(slot, { rocket, orbit, exposure }); const t = Object.values(w).reduce((a, b) => a + b, 0); return id => (w[id] || 0) / t; };
   const p1 = p(1, 'high'), p2low = p(2, 'low'), p2high = p(2, 'high');
   const lvl = x => (x >= 0.4 ? 'HIGH' : x >= 0.2 ? 'MODERATE' : 'LOW');
   return Object.values(HAZARDS).map(h => {
@@ -391,6 +450,8 @@ function resetMission(scenarioId) {
     missionStatus: null, reasons: [], objectives: [],
     collectedScience: 0, transmittedFraction: 1, scanAdjust: 0,
     hazards: [],
+    travelMode: null, travel: null, flightPhase: null,
+    moonDistance: Math.round(EARTH_MOON.perigee + Math.random() * (EARTH_MOON.apogee - EARTH_MOON.perigee)),
     failure: null, flags: {}, log: [],
   });
   M.budget = budgetCap();
@@ -469,11 +530,49 @@ function commitDesign(sel) {
   if (k.id !== 'none') addLog('Design', k.name, [chip('budgetCost', k.cost), chip('mass', k.mass)].concat(k.fuel ? [note(`Fuel +${k.fuel}%`)] : []), k.gain + '.');
 }
 
-// ---- Checkpoint 2: arrival + orbit
+// ---- Checkpoint 2: travel strategy, trans-lunar injection, lunar orbit insertion
+// Travel strategies whose transfer would leave less than the minimum arrival fuel cannot be flown.
+const travelAllowed = (id, fuel = M.fuel, mass = M.mass) => fuel - travelPlan(id, mass).fuelTotal >= RULES.minArrivalFuel;
+
+function setTravel(id) {
+  const tp = travelPlan(id);
+  M.travelMode = id;
+  M.travel = tp;
+  addLog('Travel', tp.name, [note(`≈${fmtDuration(tp.hours)}`), chip('fuel', -tp.fuelTotal)].concat(tp.risk ? [chip('risk', tp.risk)] : []),
+    `Estimated lunar arrival ${fmtDuration(tp.hours, true)}; transfer propellant ${tp.fuelTotal}% (TLI ${tp.tli}% + LOI ${tp.loi}%).`);
+  return tp;
+}
+
+// Trans-lunar injection: the departure burn that leaves Earth orbit.
+function departEarth() {
+  const tp = M.travel || setTravel('balanced');
+  M.flightPhase = 'TRANS_LUNAR_TRANSFER';
+  return applyFx('Transfer', 'Trans-lunar injection burn', { fuel: -tp.tli, risk: tp.risk },
+    `${tp.name}: ${tp.usage.toLowerCase()}-energy departure from Earth orbit - game model.`);
+}
+
+// Lunar arrival: cruise-system power for the coast, then the braking burn into lunar orbit.
 function arrive() {
-  const cost = loiFuel(M.mass);
-  return applyFx('Transfer', 'Lunar orbit insertion burn', { fuel: -cost },
-    `Braking burn scales with spacecraft mass (${M.mass} kg ÷ 10) - game model.`);
+  const tp = M.travel || setTravel('balanced');
+  const chips = [];
+  if (tp.cruisePower) chips.push(...applyFx('Transfer', `Cruise systems (${fmtDuration(tp.cruiseHours)} coast)`, { power: -tp.cruisePower },
+    'Heaters, attitude control and communications while coasting - game model.'));
+  if (M.failure) return chips;
+  M.flightPhase = 'LUNAR_ORBIT_INSERTION';
+  if (M.fuel < tp.loi) {
+    M.failure = `Not enough propellant for lunar orbit insertion (${M.fuel}% left, ${tp.loi}% needed) - LUNA-01 flew past the Moon.`;
+    M.flags.missedCapture = true;
+    addLog('Transfer', 'LUNAR ORBIT INSERTION FAILED', [{ t: '✖ Missed lunar capture', tone: 'bad' }], M.failure);
+    M.fuel = 0;
+    return chips.concat([{ t: '✖ Missed lunar capture', tone: 'bad' }]);
+  }
+  chips.push(...applyFx('Transfer', 'Lunar orbit insertion burn', { fuel: -tp.loi },
+    `Braking burn for a ${tp.name.toLowerCase()} arrival (spacecraft mass ${M.mass} kg) - game model.`));
+  if (!orbitAllowed('high') && !orbitAllowed('low')) {
+    M.failure = `Captured by the Moon, but only ${M.fuel}% propellant is left - not enough to reach a stable science orbit.`;
+    addLog('Transfer', 'NO SCIENCE ORBIT', [{ t: '✖ Orbit unreachable', tone: 'bad' }], M.failure);
+  }
+  return chips;
 }
 
 function orbitFx(id) {
@@ -549,7 +648,7 @@ function runScan(id) {
 const hasBattery = () => POWER_SYSTEMS[M.selectedPowerSystem].battery;
 function eventDrain() {
   const base = hasBattery() ? EVENT.batteryDrain : EVENT.drain;
-  return Math.round(base * region().drain * (scenario().drainMult || 1));
+  return Math.round(base * region().drain * (scenario().drainMult || 1) * (M.travel ? M.travel.nightFactor : 1));
 }
 function applyEventDrain() {
   return applyFx('Event', 'Lunar night heater load', { power: -eventDrain() },

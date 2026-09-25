@@ -457,12 +457,14 @@ const Draw = (() => {
     ctx.fillStyle = '#4f5663';
     ctx.beginPath(); ctx.moveTo(-16, -4); ctx.lineTo(-22, -6); ctx.lineTo(-22, 6); ctx.lineTo(-16, 4); ctx.closePath(); ctx.fill();
     if (o.thrust) {
+      const k = o.thrust === true ? 1 : o.thrust;          // 1 = trim thruster, 2-3 = main engine burn
       ctx.save(); ctx.globalCompositeOperation = 'lighter';
-      const fl = 12 + Math.random() * 5;
+      const fl = (12 + Math.random() * 5) * k, fw = 4 + (k - 1) * 2;
       const fg = ctx.createLinearGradient(-22, 0, -22 - fl, 0);
-      fg.addColorStop(0, 'rgba(200,225,255,0.85)'); fg.addColorStop(1, 'rgba(120,160,255,0)');
+      fg.addColorStop(0, 'rgba(235,245,255,0.95)'); fg.addColorStop(0.3, 'rgba(170,205,255,0.8)'); fg.addColorStop(1, 'rgba(120,160,255,0)');
       ctx.fillStyle = fg;
-      ctx.beginPath(); ctx.moveTo(-22, -4); ctx.lineTo(-22 - fl, 0); ctx.lineTo(-22, 4); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(-22, -fw); ctx.lineTo(-22 - fl, 0); ctx.lineTo(-22, fw); ctx.fill();
+      if (k > 1) glow(ctx, -24, 0, 10 * k, 'rgba(160,200,255,ALPHA)', 0.35);
       ctx.restore();
     }
     const blink = (t * 1.2) % 1 < 0.08;
@@ -860,7 +862,9 @@ const Draw = (() => {
   };
 
   // Launch timeline (seconds)
-  const LT = { ignite: 3, lift: 3.6, space: 7.2, sep: 8.2, end: 10.5 };
+  // Launch timeline (s): final pre-launch poll, T-5 countdown, then ignition at T-0.
+  const LT = { count: 3.4, ignite: 8.4, lift: 9.0, space: 12.6, sep: 13.6, end: 15.9 };
+  const COUNT_CAPTIONS = { 5: 'GUIDANCE INTERNAL', 4: 'TANKS AT FLIGHT PRESSURE', 3: 'ENGINE CHILLDOWN COMPLETE', 2: 'ALL SYSTEMS ARMED', 1: 'COMMIT' };
 
   // Camera shake: strong kick at ignition, sustained rumble during ascent, pyro jolt at separation.
   function launchShake(lt) {
@@ -870,6 +874,7 @@ const Draw = (() => {
       a = 11 * Math.exp(-since * 1.6) + 3.2 * clamp(since / 0.4) * (1 - clamp((lt - LT.lift - 2) / 1.6));
     }
     if (lt >= LT.sep && lt < LT.sep + 0.6) a += 4 * (1 - (lt - LT.sep) / 0.6);
+    if (lt >= LT.ignite - 1 && lt < LT.ignite) a += 0.9 * (lt - (LT.ignite - 1));   // T-1: the pad starts to tremble
     return a;
   }
 
@@ -928,13 +933,28 @@ const Draw = (() => {
           if (climb < 500) emit({ x: rx + (Math.random() - 0.5) * 50, y: 604, vx: (Math.random() - 0.5) * 340, vy: -Math.random() * 50, life: 3, max: 3, size: 12 + Math.random() * 14, grow: 26, drag: 0.965, add: false, soft: true, alpha: 0.5, color: '165,162,158' });
           else emit({ x: rx + (Math.random() - 0.5) * 8, y: ry + 30 - cam, vx: (Math.random() - 0.5) * 20, vy: 40, life: 2.2, max: 2.2, size: 6, grow: 10, drag: 0.98, add: false, soft: true, alpha: 0.35, color: '160,160,165' });
         }
-      } else if (Math.random() < 0.35) {
+      } else if (Math.random() < (lt > LT.ignite - 1 ? 0.9 : 0.35)) {      // cryogenic venting, heavier at T-1
         emit({ x: rx + (Math.random() - 0.5) * 20, y: 596, vx: (Math.random() - 0.5) * 16, vy: -12, life: 2, max: 2, size: 5, grow: 8, add: false, soft: true, alpha: 0.35, color: '215,220,228' });
       }
       drawParticles(ctx, cam);
       rocket(ctx, rx, ry, 1.35, type, t, thrust);
-      if (lt < LT.ignite) stamp(ctx, `T − ${Math.ceil(LT.ignite - lt)}`, 640, 150, COL.white, 44);
-      else if (lt < LT.lift + 1.4) stamp(ctx, 'LIFTOFF', 640, 150, COL.white, 38);
+      if (lt < LT.count) {
+        stamp(ctx, 'FINAL PRE-LAUNCH CHECKS', 420, 150, COL.cyan, 20);
+        text(ctx, `LAUNCH DIRECTOR POLL · ${Math.min(Game.pollStep, 7)} OF 7 STATIONS GO`, 420, 196, { align: 'center', size: 11, color: COL.label, spacing: 2 });
+        if (M.travel) text(ctx, `TRAVEL STRATEGY LOCKED · ${M.travel.short} · ≈${fmtDuration(M.travel.hours)}`, 420, 216, { align: 'center', size: 11, color: COL.amber, spacing: 2 });
+      } else if (lt < LT.ignite) {
+        const n = Math.ceil(LT.ignite - lt), frac = (LT.ignite - lt) - (n - 1);   // 1 → 0 within each second
+        const enter = clamp((frac - 0.8) / 0.2), col = n === 1 ? COL.amber : COL.white;
+        ctx.save();
+        ctx.translate(420, 190); ctx.scale(1 + enter * 0.35, 1 + enter * 0.35);
+        text(ctx, `T−${n}`, 0, 0, { align: 'center', size: 84, weight: 300, color: col, alpha: 1 - enter, spacing: 6, glow: 1 });
+        ctx.restore();
+        ctx.save(); ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.globalAlpha = 0.8;      // sub-second progress ring
+        ctx.beginPath(); ctx.arc(420, 190, 74, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - frac)); ctx.stroke();
+        ctx.globalAlpha = 0.2; ctx.beginPath(); ctx.arc(420, 190, 74, 0, TAU); ctx.stroke(); ctx.restore();
+        text(ctx, COUNT_CAPTIONS[n], 420, 286, { align: 'center', size: 11, color: n === 1 ? COL.amber : COL.label, spacing: 3 });
+        if (n === 1) { ctx.fillStyle = `rgba(232,165,75,${0.05 + 0.05 * Math.sin(t * 20)})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
+      } else if (lt < LT.lift + 1.4) stamp(ctx, 'LIFTOFF!', 420, 170, COL.white, 44);
       const flash = clamp((lt - (LT.space - 0.35)) / 0.35);
       if (flash > 0) { ctx.fillStyle = `rgba(0,0,0,${flash})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
     } else {
@@ -955,42 +975,206 @@ const Draw = (() => {
       else spacecraft(ctx, cx, cy, 1.1, -0.12 + sep * 0.12, craftCfg(), t, { deploy: ease(clamp((lt - LT.sep - 0.3) / 1.3)) });
       drawParticles(ctx);
       if (lt > LT.sep) tag(ctx, 'SPACECRAFT SEPARATION CONFIRMED', 420, 118, COL.cyan, 'center');
-      if (lt > LT.end - 0.8) stamp(ctx, 'NOMINAL ORBIT', 420, 160, COL.green, 24);
+      if (lt > LT.end - 0.8) stamp(ctx, 'EARTH ORBIT REACHED', 420, 160, COL.green, 24);
       if (fade > 0) { ctx.fillStyle = `rgba(0,0,0,${fade})`; ctx.fillRect(-20, -20, W + 40, H + 40); }
     }
   };
 
-  const TR = { e: { x: 150, y: 480, r: 70 }, m: { x: 640, y: 230, r: 48 }, p0: { x: 205, y: 438 }, p1: { x: 360, y: 110 }, p2: { x: 595, y: 245 } };
-  const TRANSFER_TIME = 6.5;
+  // ---- Earth-to-Moon journey geometry (world coordinates; the camera zooms over it).
+  // Parking orbit is flown clockwise; trans-lunar injection happens at DEPART and the spacecraft
+  // follows a cubic Bezier to the top of its lunar orbit. Wider strategies bulge further out.
+  const TJ = { e: { x: 190, y: 500, r: 58 }, rp: 82, m: { x: 650, y: 200, r: 40 }, rl: 62, depart: 200 * D2R };
+  const PATH_SHAPE = { fast: { l1: 120, l2: 110, lift: 0 }, balanced: { l1: 175, l2: 160, lift: -25 }, efficient: { l1: 250, l2: 240, lift: -60 } };
+  function transferCurve(mode) {
+    const sh = PATH_SHAPE[mode] || PATH_SHAPE.balanced;
+    const p0 = { x: TJ.e.x + TJ.rp * Math.cos(TJ.depart), y: TJ.e.y + TJ.rp * Math.sin(TJ.depart) };
+    const v = { x: -Math.sin(TJ.depart), y: Math.cos(TJ.depart) };        // clockwise orbital direction at departure
+    const p3 = { x: TJ.m.x, y: TJ.m.y - TJ.rl };
+    return [p0, { x: p0.x + v.x * sh.l1, y: p0.y + v.y * sh.l1 }, { x: p3.x - sh.l2, y: p3.y + sh.lift }, p3];
+  }
+  const cb = (c, u) => {
+    const a = (1 - u) ** 3, b = 3 * (1 - u) ** 2 * u, d = 3 * (1 - u) * u * u, e = u ** 3;
+    return { x: a * c[0].x + b * c[1].x + d * c[2].x + e * c[3].x, y: a * c[0].y + b * c[1].y + d * c[2].y + e * c[3].y };
+  };
+  const cbAng = (c, u) => { const p = cb(c, Math.max(0, u - 0.004)), q = cb(c, Math.min(1, u + 0.004)); return Math.atan2(q.y - p.y, q.x - p.x); };
+  function curvePath(ctx, c, from = 0, to = 1) {
+    ctx.beginPath();
+    for (let i = 0; i <= 60; i++) { const q = cb(c, from + (to - from) * i / 60); if (i) ctx.lineTo(q.x, q.y); else ctx.moveTo(q.x, q.y); }
+  }
+
+  // Visual timing (s). The coast length scales with the chosen strategy's real travel time.
+  const TRANSFER = { park: 5.2, tli: 2.6, loi: 3.2, tliArc: 0.07 };
+  const cruiseTime = () => (M.travel ? M.travel.cruiseHours : 73) / 13.5;
+  const SC = { x: 400, y: 395 };
+  const lerpPt = (a, b, k) => ({ x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k) });
+
+  // Camera: zoomed on Earth for the parking orbit, wide for the coast, zoomed on the Moon for capture.
+  function journeyCam() {
+    const earthCam = { c: TJ.e, z: 2.1 }, wide = { c: { x: SC.x, y: SC.y - 52 }, z: 0.95 }, moonCam = { c: TJ.m, z: 2.3 };
+    const blend = (a, b, k) => { k = ease(clamp(k)); return { c: lerpPt(a.c, b.c, k), z: lerp(a.z, b.z, k) }; };
+    const ph = Game.phase;
+    if (ph === 'parking') return earthCam;
+    if (ph === 'tli') return blend(earthCam, wide, (Game.phaseT - TRANSFER.tli * 0.45) / (TRANSFER.tli * 0.9));
+    if (ph === 'loi' || ph === 'arrived') return blend(wide, moonCam, Game.phaseT / 1.3 + (ph === 'arrived' ? 1 : 0));
+    return blend(earthCam, wide, (progressT('cruise') + TRANSFER.tli * 0.55) / (TRANSFER.tli * 0.9));
+  }
+
+  // Mission elapsed time (hours) for the current point of the journey.
+  function journeyMET() {
+    const tp = M.travel; if (!tp) return 0;
+    const ph = Game.phase;
+    if (ph === 'parking') return 0.2 + (PARKING_HOURS - 0.2) * clamp(Game.phaseT / TRANSFER.park);
+    if (ph === 'tli') return PARKING_HOURS + 0.1 * clamp(Game.phaseT / TRANSFER.tli);
+    if (ph === 'loi' || ph === 'arrived') return tp.hours;
+    return PARKING_HOURS + 0.1 + (tp.cruiseHours - 0.1) * clamp(progressT('cruise') / cruiseTime());
+  }
+  const fmtMET = h => { const d = Math.floor(h / 24), hh = Math.floor(h - d * 24), mm = Math.floor((h * 60) % 60); return `${d} d ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`; };
+
   S.TRANSFER = (ctx, t) => {
     hazardShake(ctx, t);
-    background(ctx, t, 8); grid(ctx, 0.02);
-    earth(ctx, TR.e.x, TR.e.y, TR.e.r);
-    moon(ctx, TR.m.x, TR.m.y, TR.m.r);
-    const pr = Game.phase === 'arrived' ? 1 : ease(clamp(progressT('cruise') / TRANSFER_TIME));
-    route(ctx, TR.p0, TR.p1, TR.p2, t, pr);
-    let q, ang;
-    if (pr < 1) {
-      q = qb(TR.p0, TR.p1, TR.p2, pr);
-      const q2 = qb(TR.p0, TR.p1, TR.p2, Math.min(1, pr + 0.01));
-      ang = Math.atan2(q2.y - q.y, q2.x - q.x);
-    } else {
-      const th = Game.phaseT * 1.2;
-      q = { x: TR.m.x + Math.cos(th) * 80, y: TR.m.y + Math.sin(th) * 28 };
+    background(ctx, t, 3); grid(ctx, 0.02);
+    const tp = M.travel, mode = M.travelMode || 'balanced', c = transferCurve(mode), ph = Game.phase;
+    const cam = journeyCam();
+    ctx.save();
+    ctx.translate(SC.x, SC.y); ctx.scale(cam.z, cam.z); ctx.translate(-cam.c.x, -cam.c.y);
+    const lw = 1 / cam.z;
+    // Earth + parking orbit
+    earth(ctx, TJ.e.x, TJ.e.y, TJ.e.r);
+    ctx.save(); ctx.strokeStyle = COL.cyan; ctx.lineWidth = 1.2 * lw;
+    ctx.globalAlpha = ph === 'parking' ? 0.7 : 0.25; ctx.setLineDash(ph === 'parking' ? [] : [3 * lw, 5 * lw]);
+    ctx.beginPath(); ctx.arc(TJ.e.x, TJ.e.y, TJ.rp, 0, TAU); ctx.stroke(); ctx.restore();
+    // Moon + lunar orbit
+    moon(ctx, TJ.m.x, TJ.m.y, TJ.m.r);
+    if (ph === 'loi' || ph === 'arrived') {
+      ctx.save(); ctx.strokeStyle = COL.green; ctx.globalAlpha = 0.6; ctx.lineWidth = 1.2 * lw;
+      ctx.beginPath(); ctx.arc(TJ.m.x, TJ.m.y, TJ.rl, 0, TAU); ctx.stroke(); ctx.restore();
+    }
+    // transfer trajectory: planned (dashed) and flown (solid)
+    let s = 0;
+    if (ph === 'tli') s = TRANSFER.tliArc * Math.pow(clamp(Game.phaseT / TRANSFER.tli), 2);
+    else if (ph === 'cruise' || ph === 'hazard' || ph === 'hazardDone') {
+      const u = clamp(progressT('cruise') / cruiseTime());
+      s = TRANSFER.tliArc + (1 - TRANSFER.tliArc) * clamp(u + 0.16 * Math.sin(Math.PI * u));  // fast after TLI, slower far from Earth
+    } else if (ph === 'loi' || ph === 'arrived') s = 1;
+    ctx.save(); ctx.strokeStyle = 'rgba(150,175,200,0.35)'; ctx.lineWidth = 1 * lw; ctx.setLineDash([2 * lw, 6 * lw]);
+    curvePath(ctx, c); ctx.stroke(); ctx.restore();
+    if (s > 0) { ctx.save(); ctx.strokeStyle = COL.cyan; ctx.lineWidth = 1.6 * lw; curvePath(ctx, c, 0, s); ctx.stroke(); ctx.restore(); }
+
+    // spacecraft position and heading for each phase
+    let q, ang, thrust = false, scale = 0.55;
+    if (ph === 'parking') {
+      const w = 2 * TAU / TRANSFER.park, th = TJ.depart - w * (TRANSFER.park - Game.phaseT);
+      q = { x: TJ.e.x + TJ.rp * Math.cos(th), y: TJ.e.y + TJ.rp * Math.sin(th) };
       ang = th + Math.PI / 2;
+    } else if (ph === 'loi' || ph === 'arrived') {
+      if (M.flags.missedCapture) {
+        const k = Game.phaseT * 60, a = cbAng(c, 1);            // missed capture: sails past the Moon
+        q = { x: c[3].x + Math.cos(a) * k, y: c[3].y + Math.sin(a) * k }; ang = a;
+      } else {
+        const th = -Math.PI / 2 + (ph === 'loi' ? Game.phaseT : TRANSFER.loi + Game.phaseT) * 1.1;
+        q = { x: TJ.m.x + TJ.rl * Math.cos(th), y: TJ.m.y + TJ.rl * Math.sin(th) };
+        ang = th + Math.PI / 2;
+        if (ph === 'loi' && Game.phaseT < 1.5) { thrust = 2; ang += Math.PI; }   // retro-burn: engine faces forward
+      }
+    } else {
+      q = cb(c, s); ang = cbAng(c, Math.max(0.002, s));
+      if (ph === 'tli') { thrust = 2 + clamp(Game.phaseT / 0.6); }
+      if (evading()) thrust = true;
+    }
+    if (thrust && thrust !== true && Math.random() < 0.8) {
+      const back = ang + Math.PI;
+      emit({ x: q.x + Math.cos(back) * 14, y: q.y + Math.sin(back) * 14, vx: Math.cos(back) * 60 + (Math.random() - 0.5) * 20, vy: Math.sin(back) * 60 + (Math.random() - 0.5) * 20, life: 0.7, max: 0.7, size: 1.2, color: '180,215,255' });
     }
     drawParticles(ctx);
-    spacecraft(ctx, q.x, q.y, 0.7, ang, craftCfg(), t, { thrust: (pr >= 1 && Game.phaseT < 1.6) || evading() });
-    hazardFx(ctx, t, q.x, q.y);
-    const dist = NasaData.num('Mean distance from Earth (semi-major axis)');
-    if (!isNaN(dist)) {
-      tag(ctx, 'RANGE TO MOON', 40, 112);
-      text(ctx, `${Math.round(dist * (1 - pr)).toLocaleString('en-US')} km`, 40, 134, { size: 22, color: COL.white, weight: 400 });
-      text(ctx, 'animation · mean distance from NASA dataset', 40, 156, { size: 9.5, color: COL.faint });
+    spacecraft(ctx, q.x, q.y, scale, ang, craftCfg(), t, { thrust });
+    ctx.restore();
+
+    // ---- screen-space overlays
+    const qs = { x: SC.x + (q.x - cam.c.x) * cam.z, y: SC.y + (q.y - cam.c.y) * cam.z };
+    hazardFx(ctx, t, qs.x, qs.y);
+    const es = { x: SC.x + (TJ.e.x - cam.c.x) * cam.z, y: SC.y + (TJ.e.y - cam.c.y) * cam.z };
+    const ms = { x: SC.x + (TJ.m.x - cam.c.x) * cam.z, y: SC.y + (TJ.m.y - cam.c.y) * cam.z };
+    if (es.x > -100 && es.y < 760) tag(ctx, 'EARTH', es.x, es.y + TJ.e.r * cam.z + 18, COL.label, 'center');
+    if (ms.x < 900) tag(ctx, 'MOON', ms.x, ms.y + TJ.m.r * cam.z + 16, COL.label, 'center');
+    const titles = {
+      parking: Game.phaseT < TRANSFER.park / 2 ? ['EARTH ORBIT', 'ORBIT 1 OF 2 · SYSTEMS CHECKOUT'] : ['PREPARING FOR TRANS-LUNAR INJECTION', 'ORBIT 2 OF 2 · ENGINE ARMED'],
+      tli: ['TRANS-LUNAR INJECTION BURN', 'ENGINE FIRING · ACCELERATING OUT OF EARTH ORBIT'],
+      cruise: ['TRANS-LUNAR COAST', `${tp ? tp.short : ''} TRAJECTORY`],
+      hazard: ['TRANS-LUNAR COAST', 'ANOMALY IN PROGRESS'], hazardDone: ['TRANS-LUNAR COAST', 'ANOMALY RESOLVED'],
+      loi: M.flags.missedCapture ? ['LUNAR CAPTURE FAILED', 'NOT ENOUGH PROPELLANT TO BRAKE'] : ['ENTERING LUNAR ORBIT', 'RETRO-BURN · LUNAR ORBIT INSERTION'],
+      arrived: M.flags.missedCapture ? ['LUNAR CAPTURE FAILED', 'LUNA-01 FLEW PAST THE MOON'] : M.failure ? ['CAPTURED · NO FUEL LEFT', 'TOO LITTLE PROPELLANT FOR A SCIENCE ORBIT'] : ['LUNAR ORBIT ESTABLISHED', 'CAPTURE CONFIRMED'],
+    }[ph] || ['', ''];
+    const tcol = ph === 'tli' || ph === 'loi' ? COL.amber : (M.failure && (ph === 'loi' || ph === 'arrived')) ? COL.red : ph === 'arrived' ? COL.green : COL.cyan;
+    stamp(ctx, titles[0], 420, 118, tcol, 17);
+    text(ctx, titles[1], 420, 150, { align: 'center', size: 10.5, color: COL.label, spacing: 2 });
+    // mission clock + distance
+    if (tp) {
+      const met = journeyMET();
+      tag(ctx, 'MISSION ELAPSED TIME', 40, 196);
+      text(ctx, `MET ${fmtMET(met)}`, 40, 216, { size: 18, color: COL.white, weight: 400 });
+      tag(ctx, ph === 'arrived' || ph === 'loi' ? 'ARRIVED AFTER' : 'LUNAR ARRIVAL IN', 40, 244);
+      text(ctx, ph === 'arrived' || ph === 'loi' ? fmtDuration(tp.hours) : fmtDuration(Math.max(0, tp.hours - met)), 40, 262, { size: 14, color: COL.amber });
+      const remain = ph === 'parking' || ph === 'tli' ? tp.dist : ph === 'loi' || ph === 'arrived' ? 0 : tp.dist * (1 - s);
+      tag(ctx, 'RANGE TO MOON', 40, 290);
+      text(ctx, `${Math.round(remain).toLocaleString('en-US')} km`, 40, 308, { size: 14, color: COL.white });
+      text(ctx, 'launch-window distance', 40, 324, { size: 8.5, color: COL.faint });
     }
-    tag(ctx, 'EARTH', TR.e.x, TR.e.y + 92, COL.label, 'center');
-    tag(ctx, 'MOON', TR.m.x, TR.m.y + 66, COL.label, 'center');
-    if (pr >= 1) tag(ctx, 'LUNAR ORBIT INSERTION BURN', TR.m.x, TR.m.y - 72, COL.green, 'center');
+    // propellant readout during burns: counts down from before to after
+    const bn = Game.burn;
+    if (bn && Game.t - bn.t0 < bn.dur + 1.5) {
+      const k = clamp((Game.t - bn.t0) / bn.dur), v = Math.round(lerp(bn.from, bn.to, k));
+      const x = 40, y = 360;
+      tag(ctx, `${bn.label} · PROPELLANT`, x, y, COL.amber);
+      text(ctx, `${v}%`, x, y + 24, { size: 26, weight: 300, color: COL.white });
+      ctx.fillStyle = 'rgba(150,175,200,0.15)'; ctx.fillRect(x, y + 44, 200, 5);
+      ctx.fillStyle = COL.amber; ctx.fillRect(x, y + 44, 2 * v, 5);
+      text(ctx, `−${bn.from - bn.to}%`, x + 80, y + 26, { size: 12, color: COL.red });
+    }
+  };
+
+  // Travel-strategy preview: the three candidate trajectories from Earth orbit to the Moon.
+  S.TRAJECTORY = (ctx, t) => {
+    background(ctx, t, 1.5); grid(ctx, 0.022);
+    const k = 1.0, off = { x: 0, y: 44 };                    // journey view, shifted clear of the headline text
+    ctx.save(); ctx.translate(off.x, off.y); ctx.translate(SC.x, SC.y); ctx.scale(k, k); ctx.translate(-SC.x, -SC.y);
+    earth(ctx, TJ.e.x, TJ.e.y, TJ.e.r);
+    ctx.save(); ctx.strokeStyle = COL.cyan; ctx.globalAlpha = 0.45; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(TJ.e.x, TJ.e.y, TJ.rp, 0, TAU); ctx.stroke(); ctx.restore();
+    moon(ctx, TJ.m.x, TJ.m.y, TJ.m.r);
+    ctx.save(); ctx.strokeStyle = COL.green; ctx.globalAlpha = 0.4; ctx.beginPath(); ctx.arc(TJ.m.x, TJ.m.y, TJ.rl, 0, TAU); ctx.stroke(); ctx.restore();
+    const active = Game.preview || Game.choice;
+    const d = computeDesign(Game.sel);
+    const labels = [];
+    for (const id of ['efficient', 'balanced', 'fast']) {
+      const c = transferCurve(id), on = id === active;
+      ctx.save();
+      ctx.strokeStyle = on ? COL.amber : 'rgba(150,175,200,0.5)'; ctx.lineWidth = on ? 2 : 1;
+      ctx.setLineDash(on ? [] : [4, 5]);
+      curvePath(ctx, c); ctx.stroke(); ctx.restore();
+      if (on) {                                                 // animated craft along the highlighted path
+        const u = (t * (id === 'fast' ? 0.3 : id === 'balanced' ? 0.24 : 0.16)) % 1;
+        const q = cb(c, u);
+        spacecraft(ctx, q.x, q.y, 0.4, cbAng(c, u), craftCfg(), t);
+      }
+      const m = cb(c, 0.42), tpn = travelPlan(id, d.mass);
+      labels.push({ x: SC.x + (m.x + off.x - SC.x) * k, y: SC.y + (m.y + off.y - SC.y) * k, id, on, text: `${TRAVEL_MODES[id].short} · ≈${fmtDuration(tpn.hours)}` });
+    }
+    const dp = transferCurve('balanced')[0];
+    ctx.fillStyle = COL.amber; ctx.fillRect(dp.x - 2.5, dp.y - 2.5, 5, 5);
+    ctx.restore();
+    for (const l of labels) text(ctx, l.text, l.x - 14, l.y, { align: 'right', size: 10.5, color: l.on ? COL.amber : COL.label, spacing: 1.5, weight: l.on ? 700 : 500, glow: 1 });
+    const dps = { x: SC.x + (dp.x + off.x - SC.x) * k, y: SC.y + (dp.y + off.y - SC.y) * k };
+    text(ctx, 'TLI BURN POINT', dps.x - 8, dps.y - 10, { size: 9.5, color: COL.amber, spacing: 1.5, align: 'right', glow: 1 });
+    tag(ctx, 'EARTH · PARKING ORBIT', SC.x + (TJ.e.x + off.x - SC.x) * k, SC.y + (TJ.e.y + off.y - SC.y) * k + 100, COL.label, 'center');
+    tag(ctx, 'MOON · LUNAR ORBIT', SC.x + (TJ.m.x + off.x - SC.x) * k, SC.y + (TJ.m.y + off.y - SC.y) * k + 84, COL.label, 'center');
+    tag(ctx, 'TRAVEL STRATEGY · HOW QUICKLY DO YOU WANT TO REACH THE MOON?', 40, 106, COL.cyan);
+    const pg = NasaData.get('Perigee (closest)', 'orbit');
+    if (pg) {
+      tag(ctx, 'EARTH-MOON DISTANCE · THIS LAUNCH WINDOW', 40, 136);
+      text(ctx, `${Math.round(M.moonDistance).toLocaleString('en-US')} km`, 40, 156, { size: 16, color: COL.white });
+      text(ctx, `NASA range ${NasaData.show('Perigee (closest)', 'orbit')} (perigee) - ${NasaData.show('Apogee (farthest)', 'orbit')} (apogee)`, 40, 175, { size: 9.5, color: COL.faint });
+    }
+    text(ctx, 'Trajectories stylised, not to scale (simplified game model)', 40, 700, { size: 9.5, color: COL.faint });
   };
 
   const OR = { x: 390, y: 390, r: 175, rot: -0.2, low: [225, 58], high: [330, 96] };
@@ -1233,5 +1417,5 @@ const Draw = (() => {
 
   const surveyTarget = () => targetPos(SV.x, SV.y, SV.r);
 
-  return { init, frame, updateParticles, clearParticles, burst, emit, impact, packets, surveyTarget, SCAN_TIME, TX_TIME, TRANSFER_TIME, LT, W, H };
+  return { init, frame, updateParticles, clearParticles, burst, emit, impact, packets, surveyTarget, cruiseTime, TRANSFER, SCAN_TIME, TX_TIME, LT, W, H };
 })();

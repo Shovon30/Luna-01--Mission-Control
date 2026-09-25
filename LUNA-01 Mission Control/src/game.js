@@ -1,6 +1,8 @@
 // State machine, main loop, input and boot.
-// Flow: TITLE → BRIEFING → TARGET → DESIGN → DESIGN_REVIEW → LAUNCH → TRANSFER (hazard 1)
-//       → ORBIT_DECISION → SURVEY (hazard 2) → MISSION_EVENT → TRANSMISSION → RESULT → REPORT
+// Flow: TITLE → BRIEFING → TARGET → DESIGN → DESIGN_REVIEW → TRAJECTORY (travel strategy)
+//       → LAUNCH (pre-launch poll, T-5 countdown, ascent) → TRANSFER (Earth orbit → TLI burn → coast
+//       with possible hazard 1 → lunar orbit insertion) → ORBIT_DECISION → SURVEY (hazard 2)
+//       → MISSION_EVENT → TRANSMISSION → RESULT → REPORT
 
 const Game = {
   state: 'TITLE', t: 0, sceneT: 0, phase: '', phaseT: 0,
@@ -9,7 +11,9 @@ const Game = {
   review: null, launchStep: -1, lastGain: 0, eventDrain: 0, powerBefore: 100, signalDelay: 0,
   drainApplied: false,
   hazard: null,            // active/recent hazard: { id, slot, t0, resume, done, opt, outcome, hit, tDone, chips }
-  hazardFired: {},         // slot -> hazard id already triggered this mission
+  hazardFired: {},         // slot -> hazard id already triggered this mission ('none' = skipped)
+  travelMode: null,        // travel strategy chosen on the TRAJECTORY screen (locked at launch)
+  pollStep: 0, countdown: null, burn: null,
 
   go(state) {
     this.state = state; M.missionStage = state;
@@ -27,7 +31,14 @@ const Game = {
 const newSel = () => ({ rocket: null, power: null, instrument: null, kit: null });
 
 const ENTER = {
-  TITLE() { resetMission(); Game.sel = newSel(); Game.hazard = null; Game.hazardFired = {}; Draw.clearParticles(); },
+  TITLE() { resetMission(); Game.sel = newSel(); Game.travelMode = null; Game.hazard = null; Game.hazardFired = {}; Draw.clearParticles(); },
+  TRAJECTORY() {
+    Game.phase = 'choose';
+    const d = computeDesign(Game.sel);
+    const ok = id => d.fuel - travelPlan(id, d.mass).fuelTotal >= RULES.minArrivalFuel;
+    Game.choice = Game.travelMode && ok(Game.travelMode) ? Game.travelMode : ok('balanced') ? 'balanced' : null;
+    Game.preview = Game.choice;
+  },
   TARGET() { Game.phase = 'choose'; Game.choice = M.region; },
   DESIGN_REVIEW() {
     Game.review = validateDesign(Game.sel);
@@ -35,10 +46,18 @@ const ENTER = {
   },
   LAUNCH() {
     commitDesign(Game.sel);
-    Game.launchStep = 0; Game.phase = 'running'; Game.launchBlast = false;
+    setTravel(Game.travelMode);                  // strategy is locked in before the countdown
+    M.flightPhase = 'PRE_LAUNCH';
+    Game.launchStep = 0; Game.pollStep = 0; Game.countdown = null;
+    Game.phase = 'running'; Game.launchBlast = false;
     Draw.clearParticles();
   },
-  TRANSFER() { Game.phase = 'cruise'; Draw.clearParticles(); },
+  TRANSFER() {
+    Game.phase = 'parking'; M.flightPhase = 'EARTH_ORBIT'; Game.burn = null;
+    // A transfer hazard strikes with a probability that grows with coast time.
+    if (Math.random() >= M.travel.hazardChance) Game.hazardFired[1] = 'none';
+    Draw.clearParticles();
+  },
   ORBIT_DECISION() { Game.phase = 'choose'; Game.hazard = null; },
   SURVEY() { Game.phase = 'brief'; Draw.clearParticles(); },
   MISSION_EVENT() {
@@ -99,25 +118,54 @@ function update(dt) {
 
   if (s === 'LAUNCH' && Game.phase === 'running') {
     const LT = Draw.LT, lt = Game.sceneT;
-    const marks = [0, LT.ignite, LT.lift, LT.lift + 1.4, LT.space, LT.sep, LT.end];
+    // final pre-launch poll: one station reports GO at a time
+    const poll = Math.min(UI.POLL_COUNT, Math.floor(lt / (LT.count / (UI.POLL_COUNT + 0.5))));
+    if (poll !== Game.pollStep) { Game.pollStep = poll; Sfx.click(); UI.render(); }
+    // T-5 ... T-1 countdown (launch animation cannot start before T-0)
+    if (lt >= LT.count && lt < LT.ignite) {
+      const n = Math.ceil(LT.ignite - lt);
+      if (n !== Game.countdown) { Game.countdown = n; M.flightPhase = 'COUNTDOWN'; Sfx.countdown(n); UI.render(); }
+    }
+    const marks = [0, LT.count, LT.ignite, LT.lift + 1.4, LT.space, LT.sep, LT.end];
     let step = 0;
     marks.forEach((m, k) => { if (lt >= m) step = k; });
     if (step !== Game.launchStep) {
       Game.launchStep = step;
-      if (step === 1) Sfx.launch();
+      if (step === 2) { Game.countdown = 0; M.flightPhase = 'ASCENT'; Sfx.launch(); }
       if (step === 4) Draw.clearParticles();
       if (step === 5) Sfx.separation();
-      if (step === 6) { Game.phase = 'done'; Sfx.confirm(); }
+      if (step === 6) { Game.phase = 'done'; M.flightPhase = 'EARTH_ORBIT'; Sfx.confirm(); }
       UI.render();
     }
   }
 
-  if (s === 'TRANSFER' && Game.phase === 'cruise') {
-    if (!Game.hazardFired[1] && Game.phaseT >= 2.6) startHazard(1);
-    else if (Game.phaseT >= Draw.TRANSFER_TIME) {
-      const chips = arrive();
-      Sfx.burn(1.6);
-      UI.toast('LUNAR ORBIT INSERTION', chips);
+  if (s === 'TRANSFER') {
+    const TT = Draw.TRANSFER;
+    if (Game.phase === 'parking' && Game.phaseT >= TT.park) {
+      // Trans-lunar injection: the fuel for the chosen strategy is spent here
+      const before = M.fuel;
+      const chips = departEarth();
+      M.flightPhase = 'TLI_BURN';
+      Game.burn = { label: 'TLI BURN', from: before, to: M.fuel, t0: Game.t, dur: TT.tli };
+      Sfx.tli(TT.tli);
+      UI.toast('TRANS-LUNAR INJECTION', chips);
+      Game.setPhase('tli');
+    } else if (Game.phase === 'tli' && Game.phaseT >= TT.tli) {
+      M.flightPhase = 'TRANS_LUNAR_TRANSFER';
+      Game.setPhase('cruise');
+    } else if (Game.phase === 'cruise') {
+      const cs = Draw.cruiseTime();
+      if (!Game.hazardFired[1] && Game.phaseT >= cs * 0.4) startHazard(1);
+      else if (Game.phaseT >= cs) {
+        const before = M.fuel;
+        const chips = arrive();
+        Game.burn = M.failure ? null : { label: 'LOI BURN', from: before, to: M.fuel, t0: Game.t, dur: 1.4 };
+        if (M.failure) Sfx.failure(); else Sfx.burn(1.6);
+        UI.toast('LUNAR ORBIT INSERTION', chips);
+        Game.setPhase('loi');
+      }
+    } else if (Game.phase === 'loi' && Game.phaseT >= TT.loi) {
+      if (!M.failure) { M.flightPhase = 'LUNAR_ORBIT'; Sfx.confirm(); }
       Game.setPhase('arrived');
     }
   }
@@ -171,7 +219,7 @@ const ACTIONS = {
   },
   review() { if (computeDesign(Game.sel).complete) Game.go('DESIGN_REVIEW'); },
   redesign() { Sfx.click(); Game.go('DESIGN'); },
-  launch() { if (Game.review && Game.review.ok) { Sfx.click(); Game.go('LAUNCH'); } },
+  'to-trajectory'() { if (Game.review && Game.review.ok) { Sfx.click(); Game.go('TRAJECTORY'); } },
   'to-transfer'() { Sfx.click(); Game.go('TRANSFER'); },
   'to-orbit'() { Sfx.click(); Game.go('ORBIT_DECISION'); },
   'to-survey'() { Sfx.click(); Game.go('SURVEY'); },
@@ -182,6 +230,7 @@ const ACTIONS = {
     Game.choice = el.dataset.id;
     Game.preview = el.dataset.id;
     if (Game.state === 'TARGET') M.region = el.dataset.id;
+    if (Game.state === 'TRAJECTORY') Game.travelMode = el.dataset.id;
     Sfx.select();
     UI.render();
   },
@@ -194,6 +243,11 @@ const ACTIONS = {
     if (s === 'TARGET') {
       M.region = id;
       Game.go('DESIGN');
+    } else if (s === 'TRAJECTORY') {
+      const d = computeDesign(Game.sel);
+      if (d.fuel - travelPlan(id, d.mass).fuelTotal < RULES.minArrivalFuel) return;
+      Game.travelMode = id;
+      Game.go('LAUNCH');
     } else if (s === 'ORBIT_DECISION') {
       if (!orbitAllowed(id)) return;
       const chips = chooseOrbit(id);
@@ -222,7 +276,7 @@ const ACTIONS = {
   replay() {
     Sfx.confirm();
     resetMission();
-    Game.sel = newSel();
+    Game.sel = newSel(); Game.travelMode = null;
     Game.review = null; Game.lastGain = 0; Game.eventDrain = 0; Game.hazard = null; Game.hazardFired = {};
     Draw.clearParticles();
     Game.go('BRIEFING');
@@ -288,6 +342,13 @@ async function boot() {
   window.addEventListener('pointerdown', () => Sfx.init(), { once: true });
   await NasaData.load();
   // One-way radio delay: taken from the orbital dataset (a NASA-derived value) when available.
+  // Earth-Moon distances for the travel model come from the orbital dataset.
+  setEarthMoon({
+    mean: NasaData.num('Semi-major axis (mean Earth-Moon distance)', 'orbit'),
+    perigee: NasaData.num('Perigee (closest)', 'orbit'),
+    apogee: NasaData.num('Apogee (farthest)', 'orbit'),
+  });
+  resetMission();
   const delay = NasaData.num('One-way light/radio delay at mean distance', 'orbit');
   const dist = NasaData.num('Mean distance from Earth (semi-major axis)');
   Game.signalDelay = !isNaN(delay) ? delay : isNaN(dist) ? 0 : dist / 299792.458;
